@@ -1,0 +1,131 @@
+# Blender 5.1.2 MTL File: 'DroneTest.blend'
+# www.blender.org
+
+newmtl 3DModel_Custom
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd C:/3DModel_Custom.jpg
+map_Ns C:/3DModel_Custom_Roughness.jpg
+map_refl C:/3DModel_Custom_Metallic.jpg
+map_Bump -bm 1.000000 C:/3DModel_Custom_Normal.jpg
+
+newmtl Baslangic_Harf_Mavi
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.100000 0.350000 0.850000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl Baslangic_Plaka_Beyaz
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl Old_road
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Ns C:/concrete_old_road_Roughness_1.jpg
+map_Bump -bm 1.000000 C:/concrete_old_road_Normal_1.jpg
+
+newmtl PX_Mossy_stone_wall_01_LOD0
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/PX_Mossy_stone_wall_01_albedo.jpg
+map_Ns C:/PX_Mossy_stone_wall_01_roughness.jpg
+map_Bump -bm 1.000000 C:/PX_Mossy_stone_wall_01_normal_LOD0.jpg
+
+newmtl Pile_of_rubble_03_u1_v1.004
+Ns 4.999998
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Pile_of_rubble_03_u1_v1_diffuse.jpeg
+map_Bump -bm 1.000000 C:/Pile_of_rubble_03_u1_v1_normal.jpeg
+
+newmtl Pile_of_rubble_04_u1_v1
+Ns 4.999998
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Pile_of_rubble_04_u1_v1_diffuse.jpeg
+map_Bump -bm 1.000000 C:/Pile_of_rubble_04_u1_v1_normal.jpeg
+
+newmtl Pile_of_rubble_u1_v1.001
+Ns 4.999998
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Pile_of_rubble_u1_v1_diffuse.jpeg
+map_Bump -bm 1.000000 C:/Pile_of_rubble_u1_v1_normal.jpeg
+
+newmtl Rubble_ruins.1001
+Ns 4.999998
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Rubble_ruins_diffuse.1001.jpeg
+map_Bump -bm 1.000000 C:/Rubble_ruins_normal.1001.jpeg
+
+newmtl Target_15.001
+Ns 10.000005
+Ka 1.000000 1.000000 1.000000
+Kd 0.850000 0.100000 0.100000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl White_Text.015
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl material_0
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd C:/entulho_basecolor.jpeg
+map_Bump -bm 1.000000 C:/entulho_normal.jpeg
