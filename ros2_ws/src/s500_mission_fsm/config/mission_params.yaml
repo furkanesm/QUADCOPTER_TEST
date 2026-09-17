@@ -1,0 +1,33 @@
+/**:
+  ros__parameters:
+    # --- 1. İRTİFA KURALLARI (Kalkış noktasına göre rölatif) ---
+    min_cruise_altitude_m: 30.0
+    max_relative_altitude_m: 35.0
+    takeoff_altitude_m: 32.5
+    cruise_altitude_m: 32.5
+    altitude_tolerance_m: 0.8
+    max_vertical_speed_for_arrival_ms: 0.25
+    stability_duration_s: 2.0
+
+    # --- 2. UÇUŞ VE HIZ LİMİTLERİ ---
+    max_horizontal_speed_ms: 1.0
+    waypoint_acceptance_radius_m: 0.8
+    hover_duration_s: 5.0
+    waypoint_hold_time_s: 1.0
+
+    # --- 3. KARE ROTA (5x5m, Kalkış noktasına göre yerel koordinatlar) ---
+    # Sırasıyla: (5,0), (5,5), (0,5), (0,0)
+    square_waypoints_x: [5.0, 5.0, 0.0, 0.0]
+    square_waypoints_y: [0.0, 5.0, 5.0, 0.0]
+
+    # --- 4. GÖREV TEST KAPSAMI ---
+    # 'HOVER_ONLY': Test A (Kalkış -> 5s Bekleme -> İniş)
+    # 'FULL_ROUTE': Test B (Kalkış -> 5s Bekleme -> 5x5m Rota -> Dönüş -> İniş)
+    test_mode: "FULL_ROUTE"
+
+    # --- 5. GÜVENLİK VE ZAMAN AŞIMLARI ---
+    # 32.5 metreye tırmanış/iniş hızlarına uygun süreler
+    telemetry_timeout_s: 3.0
+    takeoff_timeout_s: 75.0
+    landing_timeout_s: 80.0
+    waypoint_timeout_s: 35.0
