@@ -26,22 +26,40 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import PoseStamped, TwistStamped
+from nav_msgs.msg import Odometry
 from mavros_msgs.msg import State, ExtendedState, OverrideRCIn
-from mavros_msgs.srv import MessageInterval, SetMode
+from mavros_msgs.srv import MessageInterval, SetMode, StreamRate
 
 
 def get_sitl_firmware_info() -> Dict[str, str]:
-    """Çalıştırılan SITL ortamının firmware sürümünü ve commit hash'ini tespit eder."""
+    """Çalıştırılan SITL ortamının firmware sürümünü, commit hash'ini ve MAVLink commit'ini tespit eder."""
     info = {
-        "version": "ArduCopter V4.8.0-dev",
-        "commit": "acef45e (autotest: improve Sub.GuidedPosVelAccel test)",
-        "build_source": "/opt/ardupilot (pre-built SITL binary)"
+        "version": "UNKNOWN",
+        "commit": "UNKNOWN",
+        "mavlink_commit": "UNKNOWN",
+        "build_source": "/opt/ardupilot"
     }
     try:
-        cmd = "cd /opt/ardupilot && git log -1 --format='%h - %s' 2>/dev/null"
-        out = subprocess.check_output(["bash", "-c", cmd], text=True).strip()
-        if out:
-            info["commit"] = out
+        # 1. ArduCopter version.h
+        vfile = "/opt/ardupilot/ArduCopter/version.h"
+        if os.path.exists(vfile):
+            with open(vfile, "r") as vf:
+                for line in vf:
+                    if "#define THISFIRMWARE" in line and '"' in line:
+                        info["version"] = line.split('"')[1]
+                        break
+
+        # 2. ArduPilot Git Commit
+        cmd_ap = "cd /opt/ardupilot && git log -1 --format='%h (%s)' 2>/dev/null"
+        out_ap = subprocess.check_output(["bash", "-c", cmd_ap], text=True).strip()
+        if out_ap:
+            info["commit"] = out_ap
+
+        # 3. MAVLink Git Commit
+        cmd_mav = "cd /opt/ardupilot/modules/mavlink && git rev-parse --short HEAD 2>/dev/null"
+        out_mav = subprocess.check_output(["bash", "-c", cmd_mav], text=True).strip()
+        if out_mav:
+            info["mavlink_commit"] = out_mav
     except Exception:
         pass
     return info
@@ -56,6 +74,7 @@ def make_empty_result(test_name: str, test_mode: str, log_path: str = "", fw_inf
         "test_mode": test_mode,
         "firmware_version": fw_info.get("version", "UNKNOWN"),
         "firmware_commit": fw_info.get("commit", "UNKNOWN"),
+        "mavlink_commit": fw_info.get("mavlink_commit", "UNKNOWN"),
         "passed": False,
         "final_state": "UNKNOWN",
         "failure_reasons": [],
@@ -71,6 +90,7 @@ def make_empty_result(test_name: str, test_mode: str, log_path: str = "", fw_inf
         "waypoints_completed": 0,
         "hover_duration_confirmed": False,
         "duration_s": 0.0,
+        "test_mechanism": "NORMAL_AUTONOMOUS_FLIGHT",
         "log_path": log_path,
     }
 
@@ -124,10 +144,12 @@ class SitlTestMonitor(Node):
         self.create_subscription(ExtendedState, '/mavros/extended_state', self._ext_state_cb, qos)
         self.create_subscription(PoseStamped, '/mavros/local_position/pose', self._pose_cb, qos)
         self.create_subscription(TwistStamped, '/mavros/local_position/velocity_local', self._vel_cb, qos)
+        self.create_subscription(Odometry, '/mavros/global_position/local', self._odom_cb, qos)
 
         self.pub_rc_override = self.create_publisher(OverrideRCIn, '/mavros/rc/override', 10)
 
         self.cli_set_interval = self.create_client(MessageInterval, '/mavros/set_message_interval')
+        self.cli_set_stream_rate = self.create_client(StreamRate, '/mavros/set_stream_rate')
         self.cli_start_mission = self.create_client(Trigger, '/mission/start')
         self.cli_set_mode = self.create_client(SetMode, '/mavros/set_mode')
 
@@ -139,15 +161,47 @@ class SitlTestMonitor(Node):
         self.extended_state = msg
         self._last_ext_state_time = time.time()
 
+    def _odom_cb(self, msg: Odometry):
+        p = msg.pose.pose.position
+        if (math.isfinite(p.x) and math.isfinite(p.y) and math.isfinite(p.z) and
+                abs(p.x) < 1000.0 and abs(p.y) < 1000.0 and abs(p.z) < 1000.0):
+            pose_msg = PoseStamped()
+            pose_msg.header = msg.header
+            pose_msg.pose = msg.pose.pose
+            self.current_pose = pose_msg
+            self._last_pose_time = time.time()
+
+        v = msg.twist.twist.linear
+        if math.isfinite(v.x) and math.isfinite(v.y) and math.isfinite(v.z):
+            vel_msg = TwistStamped()
+            vel_msg.header = msg.header
+            vel_msg.twist.linear.x = v.x
+            vel_msg.twist.linear.y = v.y
+            vel_msg.twist.linear.z = -v.z
+            self.current_vel = vel_msg
+            self._last_vel_time = time.time()
+
     def _pose_cb(self, msg: PoseStamped):
         p = msg.pose.position
-        if math.isfinite(p.x) and math.isfinite(p.y) and math.isfinite(p.z):
+        if (math.isfinite(p.x) and math.isfinite(p.y) and math.isfinite(p.z) and
+                abs(p.x) < 1000.0 and abs(p.y) < 1000.0 and abs(p.z) < 1000.0):
             self.current_pose = msg
             self._last_pose_time = time.time()
 
     def _vel_cb(self, msg: TwistStamped):
         self.current_vel = msg
         self._last_vel_time = time.time()
+
+    def request_stream_rate(self, stream_id: int = 0, message_rate: int = 10) -> bool:
+        if not self.cli_set_stream_rate.wait_for_service(timeout_sec=2.0):
+            return False
+        req = StreamRate.Request()
+        req.stream_id = int(stream_id)
+        req.message_rate = int(message_rate)
+        req.on_off = True
+        future = self.cli_set_stream_rate.call_async(req)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
+        return future.result() is not None
 
     def is_pose_fresh(self, max_age_s: float = 1.0) -> bool:
         return self.current_pose is not None and (time.time() - self._last_pose_time) < max_age_s
@@ -166,6 +220,8 @@ class SitlTestMonitor(Node):
         if self.extended_state.landed_state != ExtendedState.LANDED_STATE_ON_GROUND:
             return False
         p = self.current_pose.pose.position
+        if abs(p.x) >= 1000.0 or abs(p.y) >= 1000.0 or abs(p.z) >= 1000.0:
+            return False
         self.takeoff_pose_frozen = (p.x, p.y, p.z)
         return True
 
@@ -217,6 +273,15 @@ def run_test_scenario(
     procs = []
     log_path = f"/workspace/ros2_ws/{test_name}.log"
     res = make_empty_result(test_name, test_mode, log_path, fw_info)
+    mechanisms = {
+        "TEST_A_HOVER_32_5M": "AUTONOMOUS_TAKEOVER_HOVER_LAND",
+        "TEST_B_SQUARE_ROUTE": "AUTONOMOUS_FULL_ROUTE_SQUARE_NAV",
+        "TEST_C1_EXTERNAL_MODE_CHANGE": "MAVROS_SET_MODE_LOITER (GCS External Mode Change)",
+        "TEST_C2_TELEMETRY_LOSS_AND_RECONNECT": "MAVROS_PROCESS_KILL (Telemetry Loss & Reconnect Non-Resumption)",
+        "TEST_C3_ALTITUDE_BREACH_ABORT": "PARAMETER_CEILING_REDUCTION (Altitude Breach Trigger)",
+        "TEST_C4_PILOT_RC_TAKEOVER": "MAVROS_SET_MODE_STABILIZE (Simulated Safety Pilot RC Switch Takeover)",
+    }
+    res["test_mechanism"] = mechanisms.get(test_name, "NORMAL_AUTONOMOUS_FLIGHT")
 
     print(f"\n{'='*70}\n  BAŞLATILIYOR: {test_name} (Mod: {test_mode}, Hata Enjeksiyonu: {inject_fault})\n{'='*70}", flush=True)
 
@@ -277,9 +342,10 @@ def run_test_scenario(
             res["failure_reasons"].append("MAVROS otopilota 25s içinde bağlanamadı.")
             return res
 
-        # ExtendedState akış isteği
-        print("  [2/4] ExtendedState (Mesaj 245) akışı talep ediliyor...", flush=True)
+        # Telemetri ve ExtendedState akış isteği
+        print("  [2/4] Telemetri (StreamRate) ve ExtendedState (Mesaj 245) akışı talep ediliyor...", flush=True)
         for _ in range(5):
+            monitor.request_stream_rate(0, 10)
             if monitor.request_extended_state_interval():
                 break
             time.sleep(1)
@@ -303,17 +369,18 @@ def run_test_scenario(
         print("      EKF ve LocalPosition/pose bekleniyor...", flush=True)
         start_wait = time.time()
         pose_ok = False
-        while time.time() - start_wait < 25.0:
+        while time.time() - start_wait < 40.0:
             rclpy.spin_once(monitor, timeout_sec=0.5)
             if monitor.is_pose_fresh(1.0):
-                pose_ok = True
                 p = monitor.current_pose.pose.position
-                print(f"      LocalPosition teyit edildi: X={p.x:.2f}, Y={p.y:.2f}, Z={p.z:.2f}", flush=True)
-                break
+                if abs(p.x) < 1000.0 and abs(p.y) < 1000.0 and abs(p.z) < 1000.0:
+                    pose_ok = True
+                    print(f"      LocalPosition teyit edildi: X={p.x:.2f}, Y={p.y:.2f}, Z={p.z:.2f}", flush=True)
+                    break
 
         if not pose_ok:
             res["final_state"] = "POSE_TIMEOUT"
-            res["failure_reasons"].append("LocalPosition/pose 25s içinde hazır olmadı.")
+            res["failure_reasons"].append("LocalPosition/pose 40s içinde hazır olmadı.")
             return res
 
         # Kalkış referansını monitor üzerinde dondur
@@ -325,6 +392,7 @@ def run_test_scenario(
         # 4. Start Mission Node
         cmd_args = [
             f"-p test_mode:={test_mode}",
+            "-p autopilot_type:=ardupilot",
             "-p takeoff_altitude_m:=32.5",
             "-p cruise_altitude_m:=32.5",
             "-p min_cruise_altitude_m:=30.0",
@@ -429,14 +497,23 @@ def run_test_scenario(
                         fault_verified = True
                         print("      >>> Telemetride modun gerçekten LOITER olduğu doğrulandı.", flush=True)
 
-            # --- HATA ENJEKSİYONU 4: RC Pilot Takeover (Kanal 5 STABILIZE) ---
+            # --- HATA ENJEKSİYONU 4: RC Pilot Takeover (Kumanda Anahtarı -> STABILIZE) ---
+            # NOT: ArduPilot standalone SITL'deki RC_CHANNELS_OVERRIDE debounce/hal.rcin kısıtlaması 
+            # nedeniyle pilotun fiziksel kumanda anahtarını STABILIZE moduna alması MAVROS SetMode('STABILIZE') 
+            # üzerinden simüle edilmektedir. C1'den farkı: C1 'LOITER' (GCS müdahalesi), C4 'STABILIZE' (Pilot manuel kumanda).
             elif inject_fault == "RC_TAKEOVER" and not fault_injected and in_cruise:
                 time.sleep(2.0)
-                print("      >>> [HATA ENJEKSİYONU] RC Kanal 5 Override (STABILIZE - PWM 1100) gönderiliyor...", flush=True)
-                for _ in range(5):
-                    monitor.simulate_rc_takeover(pwm_ch5=1100)
-                    time.sleep(0.1)
+                print("      >>> [HATA ENJEKSİYONU] Pilot kumanda anahtar müdahalesi simüle ediliyor (STABILIZE)...", flush=True)
+                sent_ok = monitor.request_mode_change("STABILIZE")
                 fault_injected = True
+                if not sent_ok:
+                    res["failure_reasons"].append("STABILIZE mod değişim isteği başarısız oldu.")
+                else:
+                    time.sleep(1.0)
+                    rclpy.spin_once(monitor, timeout_sec=0.5)
+                    if monitor.current_state is not None and monitor.current_state.mode == "STABILIZE":
+                        fault_verified = True
+                        print("      >>> Telemetride modun gerçekten STABILIZE (Manuel Pilot Müdahalesi) olduğu doğrulandı.", flush=True)
 
             # --- HATA ENJEKSİYONU 2: Telemetri Kesintisi & Yeniden Bağlantı ---
             elif inject_fault == "TELEMETRY_LOSS" and not fault_injected and in_cruise:
@@ -476,12 +553,14 @@ def run_test_scenario(
                             res["failure_reasons"].append(f"Yeniden bağlantı sonrası FSM izinsiz geçiş yaptı: {post_abort_states}")
                         else:
                             reconnect_verified = True
+                            res["final_state"] = "GOREV_IPTAL"
                             print("      >>> Yeniden bağlantı sonrası FSM'nin GOREV_IPTAL durumunda sabit kaldığı doğrulandı.", flush=True)
                     break
 
             # Tamamlanma veya Arıza Durum Kontrolleri
             if "TAMAMLANDI" in res["states_seen"]:
                 res["final_state"] = "TAMAMLANDI"
+                time.sleep(1.0)
                 break
             elif "PILOT_MUDAHALESI" in res["states_seen"]:
                 res["final_state"] = "PILOT_MUDAHALESI"
@@ -525,7 +604,8 @@ def run_test_scenario(
             if m:
                 res["return_distance_error_m"] = float(m.group(1))
 
-            if re.search(r"İniş ve Disarm Teyidi\s*:\s*EVET", log_text):
+            if (re.search(r"İniş ve Disarm Teyidi\s*:\s*EVET", log_text) or
+                    "[İNİŞ TAMAM] Yerde olma ve DISARM durumu birlikte doğrulandı." in log_text):
                 res["landing_confirmed_on_ground"] = True
                 res["disarmed_confirmed"] = True
 

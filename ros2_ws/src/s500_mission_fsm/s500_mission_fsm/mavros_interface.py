@@ -18,8 +18,9 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from geometry_msgs.msg import PoseStamped, TwistStamped
+from nav_msgs.msg import Odometry
 from mavros_msgs.msg import State, ExtendedState
-from mavros_msgs.srv import CommandBool, SetMode, CommandTOL, MessageInterval
+from mavros_msgs.srv import CommandBool, SetMode, CommandTOL, MessageInterval, StreamRate
 
 
 class LandedStatus(Enum):
@@ -32,8 +33,14 @@ class LandedStatus(Enum):
 
 
 class MavrosInterface:
-    def __init__(self, node: Node):
+    def __init__(self, node: Node, autopilot_type: str = "ardupilot"):
         self.node = node
+        self.autopilot_type = str(autopilot_type).lower()
+        if self.autopilot_type not in ["ardupilot", "px4"]:
+            raise ValueError(
+                f"Geçersiz autopilot_type: '{self.autopilot_type}'. "
+                "'ardupilot' veya 'px4' olmalıdır."
+            )
 
         # Telemetry storage
         self._state: Optional[State] = None
@@ -65,19 +72,34 @@ class MavrosInterface:
             depth=5
         )
 
-        # Subscribers
+        # Subscribers (Açık ve kesin otopilot seçimi: Fallback YOK)
         self._sub_state = self.node.create_subscription(
             State, '/mavros/state', self._state_cb, qos_state
         )
         self._sub_ext_state = self.node.create_subscription(
             ExtendedState, '/mavros/extended_state', self._ext_state_cb, qos_sensor
         )
-        self._sub_pose = self.node.create_subscription(
-            PoseStamped, '/mavros/local_position/pose', self._pose_cb, qos_sensor
-        )
-        self._sub_vel = self.node.create_subscription(
-            TwistStamped, '/mavros/local_position/velocity_local', self._vel_cb, qos_sensor
-        )
+
+        if self.autopilot_type == "ardupilot":
+            self.node.get_logger().info(
+                "[MAVROS] Otopilot: ARDUPILOT. /mavros/global_position/local (Odometry ENU) dinleniyor."
+            )
+            self._sub_odom = self.node.create_subscription(
+                Odometry, '/mavros/global_position/local', self._odom_cb, qos_sensor
+            )
+            self._sub_pose = None
+            self._sub_vel = None
+        else:
+            self.node.get_logger().info(
+                "[MAVROS] Otopilot: PX4. /mavros/local_position/pose ve velocity_local dinleniyor."
+            )
+            self._sub_pose = self.node.create_subscription(
+                PoseStamped, '/mavros/local_position/pose', self._pose_cb, qos_sensor
+            )
+            self._sub_vel = self.node.create_subscription(
+                TwistStamped, '/mavros/local_position/velocity_local', self._vel_cb, qos_sensor
+            )
+            self._sub_odom = None
 
         # Publishers
         self._pub_setpoint_pos = self.node.create_publisher(
@@ -90,6 +112,7 @@ class MavrosInterface:
         self._cli_takeoff = self.node.create_client(CommandTOL, '/mavros/cmd/takeoff')
         self._cli_land = self.node.create_client(CommandTOL, '/mavros/cmd/land')
         self._cli_set_msg_interval = self.node.create_client(MessageInterval, '/mavros/set_message_interval')
+        self._cli_set_stream_rate = self.node.create_client(StreamRate, '/mavros/set_stream_rate')
 
     # ==========================================
     # Callbacks (Sadece veri saklar, karar vermez)
@@ -102,20 +125,54 @@ class MavrosInterface:
         self._extended_state = msg
         self._last_ext_state_time = time.time()
 
+    def _odom_cb(self, msg: Odometry):
+        """
+        ArduPilot EKF yerel kartezyen ENU (East-North-Up) telemetrisi.
+        /mavros/global_position/local konusundan gelen Odometry verisini
+        PoseStamped ve TwistStamped olarak çözümler.
+        İrtifa artışı pozitif (Up), alçalış negatif (Down) ENU kuralı uygulanır.
+        """
+        now = time.time()
+        p = msg.pose.pose.position
+        if (math.isfinite(p.x) and math.isfinite(p.y) and math.isfinite(p.z) and
+                abs(p.x) < 1000.0 and abs(p.y) < 1000.0 and abs(p.z) < 1000.0):
+            pose_msg = PoseStamped()
+            pose_msg.header = msg.header
+            pose_msg.pose = msg.pose.pose
+            self._current_pose = pose_msg
+            self._last_pose_time = now
+            self._pose_history.append((now, p.x, p.y, p.z))
+            if len(self._pose_history) > 100:
+                self._pose_history = self._pose_history[-50:]
+
+        v = msg.twist.twist.linear
+        if math.isfinite(v.x) and math.isfinite(v.y) and math.isfinite(v.z):
+            vel_msg = TwistStamped()
+            vel_msg.header = msg.header
+            # MAVLink GLOBAL_POSITION_INT vz ekseni (NED: Down+) ROS ENU (Up+) dönüşümü:
+            # Tırmanışta vz pozitif Up olmalıdır.
+            vel_msg.twist.linear.x = v.x
+            vel_msg.twist.linear.y = v.y
+            vel_msg.twist.linear.z = -v.z
+            self._current_velocity = vel_msg
+            self._last_vel_time = now
+
     def _pose_cb(self, msg: PoseStamped):
         now = time.time()
-        self._current_pose = msg
-        self._last_pose_time = now
-
         p = msg.pose.position
-        if math.isfinite(p.x) and math.isfinite(p.y) and math.isfinite(p.z):
+        if (math.isfinite(p.x) and math.isfinite(p.y) and math.isfinite(p.z) and
+                abs(p.x) < 1000.0 and abs(p.y) < 1000.0 and abs(p.z) < 1000.0):
+            self._current_pose = msg
+            self._last_pose_time = now
             self._pose_history.append((now, p.x, p.y, p.z))
             if len(self._pose_history) > 100:
                 self._pose_history = self._pose_history[-50:]
 
     def _vel_cb(self, msg: TwistStamped):
-        self._current_velocity = msg
-        self._last_vel_time = time.time()
+        v = msg.twist.linear
+        if math.isfinite(v.x) and math.isfinite(v.y) and math.isfinite(v.z):
+            self._current_velocity = msg
+            self._last_vel_time = time.time()
 
     # ==========================================
     # Güncellik (Freshness) Kontrolleri
@@ -268,6 +325,9 @@ class MavrosInterface:
         ys = [p[1] for p in recent]
         zs = [p[2] for p in recent]
 
+        if any(abs(c) >= 1000.0 for c in xs + ys + zs):
+            return False, "Kalkış koordinatları makul aralıkta değil (|x,y,z| >= 1000m)."
+
         x_span = max(xs) - min(xs)
         y_span = max(ys) - min(ys)
         z_span = max(zs) - min(zs)
@@ -292,6 +352,19 @@ class MavrosInterface:
     # ==========================================
     # Servis ve Komut İstemcileri
     # ==========================================
+    def request_stream_rate(self, stream_id: int = 0, message_rate: int = 10, on_off: bool = True):
+        """
+        ArduPilot MAVLink akış hızını (StreamRate) ayarlar.
+        ArduPilot (hem SITL hem de donanım telem portları) için gereklidir.
+        """
+        if not self._cli_set_stream_rate.wait_for_service(timeout_sec=1.0):
+            return None
+        req = StreamRate.Request()
+        req.stream_id = int(stream_id)
+        req.message_rate = int(message_rate)
+        req.on_off = bool(on_off)
+        return self._cli_set_stream_rate.call_async(req)
+
     def request_extended_state_stream(self, rate_hz: float = 4.0):
         """ArduPilot'tan message 245 (EXTENDED_SYS_STATE) akışını talep eder."""
         if not self._cli_set_msg_interval.wait_for_service(timeout_sec=1.0):

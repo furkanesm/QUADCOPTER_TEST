@@ -24,6 +24,7 @@
     # 'HOVER_ONLY': Test A (Kalkış -> 5s Bekleme -> İniş)
     # 'FULL_ROUTE': Test B (Kalkış -> 5s Bekleme -> 5x5m Rota -> Dönüş -> İniş)
     test_mode: "FULL_ROUTE"
+    autopilot_type: "ardupilot"  # 'ardupilot' veya 'px4'
 
     # --- 5. GÜVENLİK VE ZAMAN AŞIMLARI ---
     # 32.5 metreye tırmanış/iniş hızlarına uygun süreler

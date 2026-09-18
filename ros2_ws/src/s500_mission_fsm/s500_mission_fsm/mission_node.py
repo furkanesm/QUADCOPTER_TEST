@@ -57,6 +57,7 @@ class S500MissionNode(Node):
         self.declare_parameter('square_waypoints_y', [0.0, 5.0, 5.0, 0.0])
 
         self.declare_parameter('test_mode', 'FULL_ROUTE')  # 'HOVER_ONLY' veya 'FULL_ROUTE'
+        self.declare_parameter('autopilot_type', 'ardupilot')  # 'ardupilot' veya 'px4'
 
         self.declare_parameter('telemetry_timeout_s', 3.0)
         self.declare_parameter('takeoff_timeout_s', 75.0)
@@ -80,14 +81,15 @@ class S500MissionNode(Node):
         self.sq_wps_x = list(self.get_parameter('square_waypoints_x').value)
         self.sq_wps_y = list(self.get_parameter('square_waypoints_y').value)
         self.test_mode = str(self.get_parameter('test_mode').value)
+        self.autopilot_type = str(self.get_parameter('autopilot_type').value).lower()
 
         self.telem_timeout = float(self.get_parameter('telemetry_timeout_s').value)
         self.takeoff_timeout = float(self.get_parameter('takeoff_timeout_s').value)
         self.landing_timeout = float(self.get_parameter('landing_timeout_s').value)
         self.wp_timeout = float(self.get_parameter('waypoint_timeout_s').value)
 
-        # MAVROS arayüzü
-        self.interface = MavrosInterface(self)
+        # MAVROS arayüzü (Açık ve kesin otopilot seçimi)
+        self.interface = MavrosInterface(self, autopilot_type=self.autopilot_type)
 
         # --- Durum Makinesi Değişkenleri ---
         self.state: MissionState = MissionState.BEKLEME
@@ -242,8 +244,8 @@ class S500MissionNode(Node):
 
         # --- 2. Global Koruma: Pilot Müdahalesi (Takeover) ---
         # Doğrulama 5: Kendi istediğimiz LAND modunu pilot müdahalesi sanma!
+        # Pilot müdahalesi kontrolü yalnız otonom uçuş aşamalarında (kalkış ve sonrası) aktiftir.
         autonomous_states = [
-            MissionState.GUIDED_VE_ARM,
             MissionState.KALKIS,
             MissionState.HAVADA_BEKLEME,
             MissionState.KISA_ROTA,
@@ -332,9 +334,11 @@ class S500MissionNode(Node):
     # ==========================================
     def _handle_hazirlik(self, elapsed: float):
         """HAZIRLIK: Telemetri, yer durumu ve kalkış konumu doğrulaması."""
-        # ExtendedState akışı talep et
+        # ExtendedState ve otopilot veri akışı talep et
         if self.state_step_count % 10 == 1:
             self.interface.request_extended_state_stream(4.0)
+            if self.autopilot_type == "ardupilot":
+                self.interface.request_stream_rate(stream_id=0, message_rate=10, on_off=True)
 
         if elapsed > 30.0:
             self._abort_mission("HAZIRLIK aşaması zaman aşımına uğradı (30s).")
@@ -364,8 +368,8 @@ class S500MissionNode(Node):
 
     def _handle_guided_ve_arm(self, elapsed: float):
         """GUIDED_VE_ARM: Mod değiştirme ve motor arm etme."""
-        if elapsed > 20.0:
-            self._abort_mission("GUIDED_VE_ARM aşaması zaman aşımına uğradı (20s).")
+        if elapsed > 60.0:
+            self._abort_mission("GUIDED_VE_ARM aşaması zaman aşımına uğradı (60s).")
             return
 
         mode_ok = (self.interface.get_flight_mode() == "GUIDED")

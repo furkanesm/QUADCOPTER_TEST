@@ -10,6 +10,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from geometry_msgs.msg import PoseStamped, TwistStamped
+from nav_msgs.msg import Odometry
 from mavros_msgs.msg import State, ExtendedState
 
 from s500_mission_fsm.mavros_interface import MavrosInterface, LandedStatus
@@ -206,3 +207,73 @@ def test_nan_inf_rejected_in_velocity_and_pose(interface):
     pose_msg.pose.position.z = 0.0
     interface._pose_cb(pose_msg)
     assert interface.get_current_xyz() is None
+
+
+# ====================================================================
+# TEST GRUBU 4: ARDUPILOT ENU DÖNÜŞÜMÜ VE OTOPİLOT SEÇİMİ
+# ====================================================================
+
+def test_autopilot_type_selection(mock_node):
+    """Otopilot seçiminin doğru konuya abone olduğunu ve geçersiz tipi reddettiğini doğrular."""
+    # ArduPilot
+    iface_ap = MavrosInterface(mock_node, autopilot_type="ardupilot")
+    assert iface_ap.autopilot_type == "ardupilot"
+    assert iface_ap._sub_odom is not None
+    assert iface_ap._sub_pose is None
+    assert iface_ap._sub_vel is None
+
+    # PX4
+    iface_px4 = MavrosInterface(mock_node, autopilot_type="px4")
+    assert iface_px4.autopilot_type == "px4"
+    assert iface_px4._sub_odom is None
+    assert iface_px4._sub_pose is not None
+    assert iface_px4._sub_vel is not None
+
+    # Geçersiz tip
+    with pytest.raises(ValueError):
+        MavrosInterface(mock_node, autopilot_type="unknown_autopilot")
+
+
+def test_odom_cb_position_and_velocity_conversion(interface):
+    """_odom_cb'nin konumu ve hızı ENU olarak doğru dönüştürdüğünü doğrular."""
+    odom = Odometry()
+    odom.pose.pose.position.x = 5.0
+    odom.pose.pose.position.y = 12.0
+    odom.pose.pose.position.z = 32.5
+    # MAVLink NED vz = -1.2 (tırmanış) -> ROS ENU vz = +1.2
+    odom.twist.twist.linear.x = 0.5
+    odom.twist.twist.linear.y = 0.8
+    odom.twist.twist.linear.z = -1.2
+
+    interface._odom_cb(odom)
+
+    # Konum doğrulaması (ENU)
+    xyz = interface.get_current_xyz()
+    assert xyz == (5.0, 12.0, 32.5)
+
+    # Dikey hız doğrulaması (ENU: yukarı pozitif)
+    vz = interface.get_current_vertical_speed()
+    assert pytest.approx(vz, abs=1e-3) == 1.2
+
+    # Yatay hız doğrulaması (hypot(0.5, 0.8))
+    vh = interface.get_current_horizontal_speed()
+    assert pytest.approx(vh, abs=1e-3) == (0.5**2 + 0.8**2)**0.5
+
+
+def test_odom_cb_capture_takeoff_pose(interface):
+    """_odom_cb üzerinden gelen örneklerle kalkış konumunun kilitlenebildiğini doğrular."""
+    ext_msg = ExtendedState()
+    ext_msg.landed_state = ExtendedState.LANDED_STATE_ON_GROUND
+    interface._ext_state_cb(ext_msg)
+
+    for _ in range(5):
+        odom = Odometry()
+        odom.pose.pose.position.x = 1.0
+        odom.pose.pose.position.y = 2.0
+        odom.pose.pose.position.z = 0.05
+        interface._odom_cb(odom)
+
+    success, msg = interface.capture_takeoff_pose(sample_count=5, max_variance_m=0.2, check_landed=True)
+    assert success is True
+    assert interface.is_takeoff_pose_locked() is True
+    assert interface.get_takeoff_pose() == (1.0, 2.0, 0.05)
