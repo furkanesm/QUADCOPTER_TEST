@@ -20,7 +20,9 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry
 from mavros_msgs.msg import State, ExtendedState
-from mavros_msgs.srv import CommandBool, SetMode, CommandTOL, MessageInterval, StreamRate
+from mavros_msgs.srv import CommandBool, SetMode, CommandTOL, MessageInterval, StreamRate, ParamPull
+from rcl_interfaces.srv import SetParameters, GetParameters
+from rcl_interfaces.msg import Parameter as RosParameter, ParameterValue, ParameterType
 
 
 class LandedStatus(Enum):
@@ -419,3 +421,61 @@ class MavrosInterface:
         msg.pose.orientation.w = math.cos(yaw_rad / 2.0)
 
         self._pub_setpoint_pos.publish(msg)
+
+    def set_ardupilot_speed_param(self, speed_mps: float, timeout_sec: float = 5.0) -> bool:
+        """
+        ArduPilot navigasyon seyir hızını (WP_SPD) ayarlar ve teyit eder.
+        Parametrelerin MAVROS üzerinde bildirilmiş olması için gerekirse önce pull yapar,
+        ardından SetParameters ile WP_SPD değerini ayarlar.
+        GetParameters ile okunan değer speed_mps ile doğrulanmazsa veya teyit yapılamazsa
+        kesinlikle False döner.
+        """
+        import rclpy
+        helper = Node("_speed_param_setter_helper")
+        try:
+            cli_pull = helper.create_client(ParamPull, "/mavros/param/pull")
+            cli_set = helper.create_client(SetParameters, "/mavros/param/set_parameters")
+            cli_get = helper.create_client(GetParameters, "/mavros/param/get_parameters")
+
+            # MAVROS'un otopilot parametrelerini almasını tetikle
+            if cli_pull.wait_for_service(timeout_sec=2.0):
+                f_p = cli_pull.call_async(ParamPull.Request(force_pull=True))
+                rclpy.spin_until_future_complete(helper, f_p, timeout_sec=4.0)
+
+            if not cli_set.wait_for_service(timeout_sec=timeout_sec):
+                self.node.get_logger().error("[MAVROS] /mavros/param/set_parameters servisi bulunamadı!")
+                return False
+
+            p = RosParameter(name="WP_SPD", value=ParameterValue(type=ParameterType.PARAMETER_DOUBLE, double_value=float(speed_mps)))
+            f_s = cli_set.call_async(SetParameters.Request(parameters=[p]))
+            rclpy.spin_until_future_complete(helper, f_s, timeout_sec=timeout_sec)
+            res_s = f_s.result()
+            if not res_s or not res_s.results or not res_s.results[0].successful:
+                reason = res_s.results[0].reason if (res_s and res_s.results) else "Zaman aşımı / boş yanıt"
+                self.node.get_logger().error(f"[MAVROS] WP_SPD SetParameters başarısız: {reason}")
+                return False
+
+            # GetParameters ile teyit et: Bulunamazsa veya okunan değer eşleşmezse False dön
+            if not cli_get.wait_for_service(timeout_sec=3.0):
+                self.node.get_logger().warn("[MAVROS] WP_SPD GetParameters servisi bulunamadı, ayar teyit edilemedi!")
+                return False
+
+            f_g = cli_get.call_async(GetParameters.Request(names=["WP_SPD"]))
+            rclpy.spin_until_future_complete(helper, f_g, timeout_sec=3.0)
+            res_g = f_g.result()
+            if not res_g or not res_g.values:
+                self.node.get_logger().warn("[MAVROS] WP_SPD GetParameters boş veya geçersiz döndü, teyit başarısız!")
+                return False
+
+            val = res_g.values[0].double_value
+            matched = (abs(val - float(speed_mps)) < 0.05)
+            if matched:
+                self.node.get_logger().info(f"[MAVROS] WP_SPD parametresi başarıyla teyit edildi: {val:.2f} m/s")
+                return True
+            else:
+                self.node.get_logger().error(
+                    f"[MAVROS] WP_SPD teyit uyuşmazlığı! Beklenen: {speed_mps:.2f} m/s, Okunan: {val:.2f} m/s"
+                )
+                return False
+        finally:
+            helper.destroy_node()
