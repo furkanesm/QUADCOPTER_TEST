@@ -1,0 +1,46 @@
+/**:
+  ros__parameters:
+    # --- 1. İRTİFA KURALLARI (Kalkış noktasına göre rölatif) ---
+    min_cruise_altitude_m: 30.0
+    max_relative_altitude_m: 35.0
+    takeoff_altitude_m: 32.5
+    cruise_altitude_m: 32.5
+    altitude_tolerance_m: 0.8
+    max_vertical_speed_for_arrival_ms: 0.25
+    stability_duration_s: 2.0
+
+    # --- 2. UÇUŞ VE HIZ LİMİTLERİ ---
+    max_horizontal_speed_ms: 1.0
+    waypoint_acceptance_radius_m: 0.8
+    hover_duration_s: 5.0
+    waypoint_hold_time_s: 1.0
+
+    # --- 3. ALAN TARAMA ROTASI (Boustrophedon / Lawnmower Deseni) ---
+    # ALAN REFERANSI: Kalkış konumu (takeoff_pose) alanın güney-batı (sol-alt) köşesi (0,0) kabul edilir.
+    # Rota ofsetleri kalkış konumuna göre [0, width_x] x [0, length_y] (örn: [0, 20] x [0, 20] metre) alanını kapsar.
+    # Koordinatlar yerel ENU (+X: Doğu, +Y: Kuzey, +Z: Yukarı) eksenindedir.
+    survey_area_width_x_m: 20.0
+    survey_area_length_y_m: 20.0
+    survey_lane_spacing_m: 4.0
+    survey_altitude_m: 32.5
+    post_survey_hover_duration_s: 10.0
+    custom_survey_waypoints_x: []
+    custom_survey_waypoints_y: []
+
+    # Eski kare rota parametreleri (Geriye dönük uyumluluk: KISA_ROTA modunda kullanılır)
+    square_waypoints_x: [5.0, 5.0, 0.0, 0.0]
+    square_waypoints_y: [0.0, 5.0, 5.0, 0.0]
+
+    # --- 4. GÖREV TEST KAPSAMI (test_mode) ---
+    # 'HOVER_ONLY': Kalkış (32.5m) -> 5s Bekleme -> İniş -> TAMAMLANDI (Test A)
+    # 'KISA_ROTA' : Kalkış (32.5m) -> 5s Bekleme -> 5x5m Kare Rota -> Dönüş -> İniş -> TAMAMLANDI (Eski Test B)
+    # 'FULL_ROUTE': Kalkış (32.5m) -> 5s Bekleme -> 20x20m Alan Tarama -> 10s Bekleme -> Dönüş -> İniş -> TAMAMLANDI (Gerçek Görev)
+    test_mode: "FULL_ROUTE"
+    autopilot_type: "ardupilot"  # 'ardupilot' veya 'px4'
+
+    # --- 5. GÜVENLİK VE ZAMAN AŞIMLARI ---
+    # 32.5 metreye tırmanış/iniş ve 20m şerit hatlarına uygun süreler
+    telemetry_timeout_s: 3.0
+    takeoff_timeout_s: 75.0
+    landing_timeout_s: 80.0
+    waypoint_timeout_s: 45.0
