@@ -14,3 +14,7 @@ Bu klasör S500 projesinin SITL simülasyonu için yerel ortamda üretilen param
 
 ## data/
 Referans CSV verileri (ör. SunnySky X3108S KV720 itki tablosu vb.).
+
+## Eklenen İlk Dosyalar (İndirilenler'den)
+- `parameters/s500_quad_baseline.param`: Projenin başında kullanılan, S500 quadcopter (Frame Class 1, Frame Type 1) yapılandırmasını içeren baz SITL parametre dosyası.
+- `S500_Gazebo_Entegrasyon_Gorevi.md`: Sistemin ArduPilot Gazebo'ya entegre edilmesini başlatan ana görev ve planlama dokümanı.
