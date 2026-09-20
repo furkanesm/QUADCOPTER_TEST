@@ -1,0 +1,23 @@
+--- /home/furkan/s500_sim/ardupilot_gazebo/models/iris_with_standoffs/model.config	2026-09-18 16:33:05.635056207 +0300
++++ /home/furkan/s500_sim/ardupilot_gazebo/models/s500_custom_with_ardupilot/model.config	2026-09-18 17:45:40.496376153 +0300
+@@ -1,7 +1,7 @@
+ <?xml version="1.0"?>
+ 
+ <model>
+-  <name>Iris with Standoffs</name>
++  <name>s500_custom_with_ardupilot</name>
+   <version>1.0</version>
+   <sdf version="1.6">model.sdf</sdf>
+ 
+@@ -26,7 +26,10 @@
+ 
+ 
+   <description>
+-    A copy of the 3DR Iris model taken from
++    DRAFT: s500_custom_with_ardupilot.
++    This model currently uses Iris physical properties (mass, inertia, motor positions, and propeller physics).
++    It is NOT physically representative of an S500 yet.
++    Original text: A copy of the 3DR Iris model taken from
+     https://github.com/PX4/sitl_gazebo/tree/master/models
+     Local modifications include adding standoffs,
+     inertia and collision updates..
