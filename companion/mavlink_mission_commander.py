@@ -12,6 +12,13 @@ from pymavlink import mavutil
 from std_msgs.msg import String
 
 from vision_interfaces.msg import DetectionArray
+import sys
+import os
+
+# Add local path for class_mapping resolution explicitly if running standalone
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from class_mapping import ClassMapper
+
 
 class MavlinkAdapterNode(Node):
     def __init__(self):
@@ -29,7 +36,7 @@ class MavlinkAdapterNode(Node):
         self.declare_parameter('my_component_id', 191) 
         
         # Classes 
-        self.declare_parameter('start_classes', ['start', 's_class'])
+        self.declare_parameter('start_classes', ['start', 's_class', 'kb_b'])
         self.declare_parameter('goal_classes', ['hedef', 'h_class'])
         
         # Timeouts and Thresholds
@@ -84,9 +91,10 @@ class MavlinkAdapterNode(Node):
         self.last_tx_err_log_time = 0.0
         self.last_rx_err_log_time = 0.0
         
+        self.mapper = ClassMapper(self.start_classes, self.goal_classes)
+        
         self.pending_commands = {}
         self.seq_counter = 1
-        
         self.last_sent_types = {1: None, 2: None}
         
         self.sub_detections = self.create_subscription(
@@ -114,12 +122,7 @@ class MavlinkAdapterNode(Node):
         if not math.isfinite(conf) or conf <= 0.0 or conf > 1.0:
             return False, 0
             
-        msg_type = 0
-        if d.class_name.lower() in [s.lower() for s in self.start_classes]:
-            msg_type = 1
-        elif d.class_name.lower() in [s.lower() for s in self.goal_classes]:
-            msg_type = 2
-            
+        msg_type = self.mapper.get_msg_type(d.class_name, self.get_logger().warn)
         if msg_type > 0:
             return True, msg_type
             
