@@ -1,0 +1,27 @@
+vision_node:
+  ros__parameters:
+    model_path: "best.pt"
+    confidence_threshold: 0.55
+    inference_rate_hz: 10.0
+    device: "cpu"
+    class_filter: ['']
+    publish_debug_image: false
+    image_topic: "/camera/image_raw"
+    pose_topic: "/mavros/local_position/pose"
+    imgsz: 640
+    test_image_dir: ""
+    pose_age_tolerance_s: 0.2
+    has_calibration: false
+    has_mount: false
+    has_ground_ref: false
+    cam_model: "plumb_bob"
+    calib_width: 0
+    calib_height: 0
+    cam_fx: 0.0
+    cam_fy: 0.0
+    cam_cx: 0.0
+    cam_cy: 0.0
+    cam_dists: [0.0, 0.0, 0.0, 0.0, 0.0]
+    mount_xyz: [0.0, 0.0, 0.0]
+    mount_rpy: [0.0, 0.0, 0.0]
+    ground_plane_z: 0.0
