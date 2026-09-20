@@ -1,0 +1,19 @@
+# Kaynak: Kullanıcı tarafından paylaşılan test tablosudur. Fiziksel aracımızda yapılmış doğrudan ölçüm değildir.
+# Motor: SunnySky X3108S KV720
+# Pervane: APC1147 (11x4.7)
+# Test voltajı: 14.8 V
+Akım_A,İtki_gramkuvvet,Devir_RPM
+1,270,2900
+2,380,3548
+3,470,4095
+4,580,4450
+5,640,4671
+6,720,4970
+7,790,5185
+8,860,5400
+9,920,5588
+10,980,5735
+12,1100,6077
+14,1190,6325
+16,1250,6565
+19.7,1370,6874
