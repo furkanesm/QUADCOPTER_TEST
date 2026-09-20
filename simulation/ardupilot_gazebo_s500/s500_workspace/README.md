@@ -18,3 +18,8 @@ Referans CSV verileri (ör. SunnySky X3108S KV720 itki tablosu vb.).
 ## Eklenen İlk Dosyalar (İndirilenler'den)
 - `parameters/s500_quad_baseline.param`: Projenin başında kullanılan, S500 quadcopter (Frame Class 1, Frame Type 1) yapılandırmasını içeren baz SITL parametre dosyası.
 - `S500_Gazebo_Entegrasyon_Gorevi.md`: Sistemin ArduPilot Gazebo'ya entegre edilmesini başlatan ana görev ve planlama dokümanı.
+
+## Eski ve Model Değiştiren Araçlar (Tarihsel)
+- `scripts/patch_sdf.py` ve `scripts/scale_inertia.py`: SDF modelini dinamik olarak değiştiren eski/yamalama betikleri. (Salt okunur analiz aracı DEĞİLLERDİR, modeli değiştirirler).
+- `scripts/calculate_inertia.py`, `scripts/compute_liftdrag.py`: Temel aerodinamik ve kütle ataleti formül testleri (Tarihsel not).
+- `scripts/diff_inertia.py` ve `.diff` uzantılı yamalar: İris ve S500 arasındaki değişikliklerin izini sürmek için eski doğrulamalar.
