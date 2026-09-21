@@ -10,6 +10,7 @@ import math
 import queue
 from pymavlink import mavutil
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from vision_interfaces.msg import DetectionArray
 import sys
@@ -70,9 +71,12 @@ class MavlinkAdapterNode(Node):
         self._running = True
         self.session_id = random.randint(1, 16000000)
         
-        # Session is strictly blocked until handshake enables it.
-        # UNIMPLEMENTED: Handshake logic (e.g. ROS Service toggle via '/mission/start').
-        self.session_active = False 
+        # Session states
+        self.IDLE = 0
+        self.STARTING = 1
+        self.ACTIVE = 2
+        self.session_state = self.IDLE
+        self.handshake_pending = None
         
         self.master = mavutil.mavlink_connection(
             self.conn_str, 
@@ -94,7 +98,7 @@ class MavlinkAdapterNode(Node):
         self.mapper = ClassMapper(self.start_classes, self.goal_classes)
         
         self.pending_commands = {}
-        self.seq_counter = 1
+        self.seq_counter = 0
         self.last_sent_types = {1: None, 2: None}
         
         self.sub_detections = self.create_subscription(
@@ -102,11 +106,65 @@ class MavlinkAdapterNode(Node):
         )
         self.pub_event_status = self.create_publisher(String, '/adapter/event_status', 10)
         
+        self.srv_start = self.create_service(Trigger, '/adapter/start_session', self.srv_start_cb)
+        self.srv_stop = self.create_service(Trigger, '/adapter/stop_session', self.srv_stop_cb)
+        
         self.retry_timer = self.create_timer(1.0 / self.retry_hz, self.retry_loop)
         self.live_timer = self.create_timer(1.0 / self.live_hz, self.liveliness_loop)
         
         self.rx_thread = threading.Thread(target=self.mavlink_rx_thread, daemon=True)
         self.rx_thread.start()
+
+    def get_next_seq(self):
+        if self.seq_counter >= 16777215:
+            self.get_logger().error("[ADAPTER FATAL] SEQ reached Float32 capacity (16777215). Controlled new session needed!")
+            self.local_stop("SEQ_LIMIT")
+            self.pub_event_status.publish(String(data="FATAL_SESSION_LIMIT"))
+            return None
+        self.seq_counter += 1
+        return self.seq_counter
+
+    def srv_start_cb(self, request, response):
+        if self.session_state != self.IDLE:
+            response.success = True
+            response.message = f"Currently in state {'ACTIVE' if self.session_state == self.ACTIVE else 'STARTING'}, request ignored."
+            return response
+            
+        self.session_state = self.STARTING
+        self.session_id = random.randint(1, 16000000)
+        self.seq_counter = 0
+        seq = self.get_next_seq()
+        if seq is None:
+            response.success = False
+            response.message = "Could not initialize SEQ."
+            return response
+        
+        self.handshake_pending = {
+            'seq': seq,
+            'retries': 0,
+            'successful_txs': 0,
+            'last_tx_mono': 0.0,
+            'queue_ts_mono': time.monotonic()
+        }
+        self.get_logger().info(f"[ADAPTER] Starting session handshake, SEQ={seq}, ID={self.session_id}")
+        response.success = True
+        response.message = "Session start handshake initiated."
+        return response
+
+    def local_stop(self, reason):
+        self.session_state = self.IDLE
+        self.handshake_pending = None
+        self.last_sent_types.clear()
+        for seq, cmd in self.pending_commands.items():
+            self.pub_event_status.publish(String(data=f"CANCELLED:{seq}:{cmd['msg_type']}"))
+        self.pending_commands.clear()
+        self.get_logger().warn(f"[ADAPTER] Local session stopped: {reason}")
+        
+    def srv_stop_cb(self, request, response):
+        self.local_stop("Stop service called")
+        response.success = True
+        response.message = "Local session stopped and queues cleared."
+        return response
 
     def _is_valid_target_payload(self, d):
         if not d.position_valid:
@@ -165,7 +223,7 @@ class MavlinkAdapterNode(Node):
         else:
             self.current_liveliness_state = 3
 
-        if not self.session_active or is_stale:
+        if self.session_state != self.ACTIVE or is_stale:
             return
             
         for d, msg_type in valid_targets:
@@ -175,7 +233,7 @@ class MavlinkAdapterNode(Node):
             self.queue_command(msg_type, x_ned, y_ned, conf, msg_time)
 
     def queue_command(self, mtype, x, y, conf, msg_time_ros):
-        if not self.session_active:
+        if self.session_state != self.ACTIVE:
             return
             
         if len(self.pending_commands) >= self.max_queue:
@@ -194,14 +252,9 @@ class MavlinkAdapterNode(Node):
             if v['msg_type'] == mtype and math.hypot(v['x'] - x, v['y'] - y) < self.spam_dist:
                 return
                 
-        seq = self.seq_counter
-        if self.seq_counter >= 16777215:
-            self.get_logger().error("[ADAPTER FATAL] SEQ reached Float32 capacity (16777215). Controlled new session needed!")
-            self.session_active = False
-            self.pub_event_status.publish(String(data="FATAL_SESSION_LIMIT"))
+        seq = self.get_next_seq()
+        if seq is None:
             return
-            
-        self.seq_counter += 1
         
         self.pending_commands[seq] = {
             'msg_type': mtype,
@@ -225,15 +278,31 @@ class MavlinkAdapterNode(Node):
                 break
 
     def _handle_ack_msg(self, msg):
-        if not self.session_active:
-            return
-            
         acked_type = int(msg.param1)
         result = int(msg.param2)
         acked_seq = int(msg.param4)
         acked_sess = int(msg.param6)
         
         if result not in [0, 1]:
+            return
+            
+        if acked_type == 0xAC:
+            if self.session_state != self.STARTING:
+                return
+            if self.handshake_pending is None or acked_seq != self.handshake_pending['seq'] or acked_sess != self.session_id:
+                return
+            if result == 0:
+                self.session_state = self.ACTIVE
+                self.get_logger().info(f"[ADAPTER] SESSION_START ACCEPTED: SEQ={acked_seq}")
+                self.pub_event_status.publish(String(data=f"HANDSHAKE_ACCEPTED:{acked_seq}"))
+            else:
+                self.session_state = self.IDLE
+                self.get_logger().warn(f"[ADAPTER] SESSION_START REJECTED: SEQ={acked_seq}")
+                self.pub_event_status.publish(String(data=f"HANDSHAKE_REJECTED:{acked_seq}"))
+            self.handshake_pending = None
+            return
+
+        if self.session_state != self.ACTIVE:
             return
             
         if acked_sess != self.session_id:
@@ -258,10 +327,31 @@ class MavlinkAdapterNode(Node):
     def retry_loop(self):
         self.process_rx_queue()
         
-        if not self.session_active:
+        now_mono = time.monotonic()
+        
+        if self.session_state == self.STARTING and self.handshake_pending is not None:
+            cmd = self.handshake_pending
+            if now_mono - cmd['last_tx_mono'] > (1.0 / self.retry_hz):
+                if cmd['retries'] >= 5:
+                    if cmd['successful_txs'] == 0:
+                        self.get_logger().error(f"[ADAPTER] SESSION_START TX_FAILED (After {cmd['retries']} attempts).")
+                        self.pub_event_status.publish(String(data=f"HANDSHAKE_TX_FAILED:{cmd['seq']}"))
+                    else:
+                        self.get_logger().error(f"[ADAPTER] SESSION_START TIMEOUT (After {cmd['retries']} tries).")
+                        self.pub_event_status.publish(String(data=f"HANDSHAKE_TIMEOUT:{cmd['seq']}"))
+                    self.session_state = self.IDLE
+                    self.handshake_pending = None
+                else:
+                    success = self.send_user_cmd(0.0, 0.0, 0.0, cmd['seq'], 0xAC)
+                    if success:
+                        cmd['successful_txs'] += 1
+                    cmd['last_tx_mono'] = now_mono
+                    cmd['retries'] += 1
+            return
+            
+        if self.session_state != self.ACTIVE:
              return
              
-        now_mono = time.monotonic()
         ros_now = self.get_clock().now()
         
         to_delete = []
@@ -298,7 +388,7 @@ class MavlinkAdapterNode(Node):
             del self.pending_commands[seq]
 
     def liveliness_loop(self):
-        if not self.session_active:
+        if self.session_state != self.ACTIVE:
             return
 
         ros_now = self.get_clock().now()
@@ -329,11 +419,13 @@ class MavlinkAdapterNode(Node):
                 float(x), float(y), float(conf), float(seq),
                 float(mtype), float(self.session_id), 1.0
             )
+            return True
         except Exception as e:
             now = time.monotonic()
             if now - self.last_tx_err_log_time > 2.0:
                 self.get_logger().error(f"Event Tx Error: {e}")
                 self.last_tx_err_log_time = now
+            return False
 
     def is_valid_int(self, val):
         return (not math.isnan(val)) and (not math.isinf(val)) and float(val).is_integer()

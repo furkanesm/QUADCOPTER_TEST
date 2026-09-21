@@ -45,17 +45,46 @@ APP_ACK'nin kendisi tekrar ACK beklemez.
 
 ## Mevcut Durum
 * **GOTO_OBSERVATION, ROUTE_READY ve GCS_DELIVERED** üreticileri şu an koda BAĞLI DEĞİLDİR.
-* `session_active=False` olduğu için adaptör uçuş kontrolcüsüne olay VE canlılık mesajı göndermemektedir. Bu nedenle Jetson→Lua trafiği şu an tamamen kapalıdır.
+* Protokolün temel handshake (onaylaşma) kısmı eklenmiştir.
 
 ## Örnek Yapılandırma
 *(Ortak konfigürasyonla doğrulanmalı)*
 *   **FCU (Cube/Lua):** System 1, Component 1
 *   **Vision (Jetson):** System 1, Component 191
 
-## Açık Kararlar
-*   **Hedef Firmware Desteği:** Hedef firmware'de Lua üzerinden doğrudan MAVLink alma/gönderme desteği henüz doğrulanmamıştır. C++ çekirdeğinin `UNSUPPORTED` diyerek ACK basması, paketin Lua'ya ulaşmadığının tek başına kanıtı DEĞİLDİR. Sınanmalıdır.
-*   **Zaman Uyumu:** Clock_type seçimi tek başına zaman senkronizasyonunu başaramaz, asıl görüntü oluşturma zamanıyla uyum incelenmelidir.
-*   **Oturum Kabul Mekanizması:** Jetson'un oturum açması (Handshake/Session Start) için komut akışı.
-*   **Origin Eşleşmesi:** Lua içerisindeki tespit edilen konumların EKF origin'e göre mi yoksa Home noktasına göre mi tahsis edileceği.
-*   **Arama Sınırları:** Hedef arama bölgesi dış çiti sınırlandırması.
-*   **Dönüş Koşulu:** UAV'nin eve dönme mantığı ROUTE_READY yayınından hemen sonra mı tetiklenecek yoksa GCS_DELIVERED verisinden sonra mı.
+## Handshake İşlemi ve Lua Sözleşmesi
+Jetson tarafı oturum işlemlerini (IDLE -> STARTING -> ACTIVE) şeklinde yerel olarak kurala bağlamış durumdadır. Aşağıdaki sözleşme bildirimleri hedef Jetson-Lua iletişim yapısını özetler. *(Not: Bu sözleşme henüz gerçek bir Lua uçağı ile donanımsal olarak doğrulanmamıştır.)*
+
+### 1. Yeni Oturum İsteği (SESSION_START = 0xAC)
+Jetson'dan Lua'ya gelir.
+
+| Param | İçerik | Detay |
+|---|---|---|
+| p1 | 0 | - |
+| p2 | 0 | - |
+| p3 | 0 | - |
+| p4 | Görev Sırası (SEQ) | 1..16777215 arası atanmış işlem numarası |
+| p5 | 0xAC | Özel mesaj türü (SESSION_START) |
+| p6 | SESSION_ID | Jetson'un rastgele atadığı kimlik numarası (1..16777215) |
+| p7 | 1 | Versiyon |
+
+- Lua, işlem durumunun izin verdiği aşamada bu oturumu açıkça kabul eder.
+- Aynı isteğin tekrar gönderilmesi halinde Lua'nın yine aynı ACK'yi üretmesi beklenir; ancak Lua bu onayı yeniden değerlendirip uçuş sistemini başa **sarmamalıdır**.
+- Kabul işlemi, uçuş FSM'ini veya EKF origin noktasına dayalı ortak referansları kendi başına sıfırlamaz. Sadece Jetson veri akışına yetki verildiğini temsil eder.
+- Jetson farklı bir `SESSION_ID` ile gelirse (Jetson yeniden başlaması vs.), bu tek başına Lua'daki mevcut aktif uçuş oturumunu/durumunu sıfırlamaz. Sadece yeni haberleşme kimliğidir.
+
+### 2. İsteğe Yanıt Geri Bildirimi (APP_ACK)
+Lua'dan Jetson'a özel yanıt:
+
+| Param | İçerik | Detay |
+|---|---|---|
+| p1 | 0xAC | Orijinal istek türü |
+| p2 | 0 veya 1 | 0 = ACCEPTED (Oturum Açıldı) / 1 = REJECTED (Oturum Reddedildi) |
+| p3 | 0 | - |
+| p4 | Orijinal SEQ | Jetson'un yolladığı SEQ değeri |
+| p5 | 0xAB | APP_ACK belirticiği |
+| p6 | Orijinal SESSION_ID | Jetson'un yolladığı SESSION_ID |
+| p7 | 1 | Versiyon |
+
+- Geçerli fakat ortam elverişsizliği vb. nedenden dolayı kabul edilmeyen isteğe `REJECTED (1)` dönülür. Ret vermek ile hiç cevap vermeyip (sessiz) Timeout'a düşürmek eş tutulmaz (Reject gelmesi Jetson'u hızla rahatlatır).
+- Lua tarafında oturumu bilinçli bırakma, kopma ya da yeniden kabul etme politikasının Lua kendi uçuş betiği içerisinde ayrıca açıkça idare edilmesi gerekir.
