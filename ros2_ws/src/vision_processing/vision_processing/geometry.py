@@ -102,4 +102,5 @@ class RaycastProjector:
         if not np.isfinite(p_ground).all():
             return {"valid": False, "x": 0.0, "y": 0.0, "reason": "NOT_FINITE"}
 
-        return {"valid": True, "x": float(p_ground[0]), "y": float(p_ground[1]), "reason": "OK"}
+        p_flat = np.asarray(p_ground, dtype=float).ravel()
+        return {"valid": True, "x": float(p_flat[0]), "y": float(p_flat[1]), "reason": "OK"}

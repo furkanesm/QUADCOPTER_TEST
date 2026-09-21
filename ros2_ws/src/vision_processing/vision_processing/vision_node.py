@@ -19,6 +19,7 @@ except ImportError:
     pass  # Node will drop out if YOLO doesn't exist at runtime
 
 from .geometry import RaycastProjector
+from .config_validation import VisionConfigValidator
 
 class ObjectTrack:
     def __init__(self, t_id, cls_id, cls_name, first_time):
@@ -45,7 +46,6 @@ class MultiObjectTracker:
         self.next_id = 1
         
     def update(self, current_time, detections: List[dict]):
-        # Age tracks
         self.tracks = [t for t in self.tracks if (current_time - t.last_seen) < self.timeout_s]
         
         assigned = []
@@ -108,13 +108,22 @@ class VisionNode(Node):
         self.declare_parameter('imgsz', 640)
         self.declare_parameter('test_image_dir', '')
         
-        # Geometry Config
+        # Geometry Config Flags
         self.declare_parameter('has_calibration', False)
-        self.declare_parameter('cam_fx', 1200.0)
-        self.declare_parameter('cam_fy', 1200.0)
-        self.declare_parameter('cam_cx', 960.0)
-        self.declare_parameter('cam_cy', 600.0)
+        self.declare_parameter('has_mount', False)
+        self.declare_parameter('has_ground_ref', False)
+        
+        # Geometry Config Values
+        self.declare_parameter('cam_model', 'plumb_bob')
+        self.declare_parameter('calib_width', 0)
+        self.declare_parameter('calib_height', 0)
+        
+        self.declare_parameter('cam_fx', 0.0)
+        self.declare_parameter('cam_fy', 0.0)
+        self.declare_parameter('cam_cx', 0.0)
+        self.declare_parameter('cam_cy', 0.0)
         self.declare_parameter('cam_dists', [0.0, 0.0, 0.0, 0.0, 0.0])
+        
         self.declare_parameter('mount_rpy', [0.0, 0.0, 0.0]) # Radians
         self.declare_parameter('mount_xyz', [0.0, 0.0, 0.0]) # Meters
         self.declare_parameter('ground_plane_z', 0.0)
@@ -137,24 +146,37 @@ class VisionNode(Node):
         self.imgsz = self.get_parameter('imgsz').value
         self.test_dir = self.get_parameter('test_image_dir').value
         
-        # Fetch geometry config
+        # Fetch flags
         self.has_calib = self.get_parameter('has_calibration').value
-        fx = self.get_parameter('cam_fx').value
-        fy = self.get_parameter('cam_fy').value
-        cx = self.get_parameter('cam_cx').value
-        cy = self.get_parameter('cam_cy').value
-        dists = self.get_parameter('cam_dists').value
-        mrpy = self.get_parameter('mount_rpy').value
-        mxyz = self.get_parameter('mount_xyz').value
+        self.has_mount = self.get_parameter('has_mount').value
+        self.has_ground_ref = self.get_parameter('has_ground_ref').value
+        
+        self.cam_model = self.get_parameter('cam_model').value
+        self.calib_width = self.get_parameter('calib_width').value
+        self.calib_height = self.get_parameter('calib_height').value
+        self.cam_fx = self.get_parameter('cam_fx').value
+        self.cam_fy = self.get_parameter('cam_fy').value
+        self.cam_cx = self.get_parameter('cam_cx').value
+        self.cam_cy = self.get_parameter('cam_cy').value
+        self.cam_dists = self.get_parameter('cam_dists').value
+        
+        self.mount_rpy = self.get_parameter('mount_rpy').value
+        self.mount_xyz = self.get_parameter('mount_xyz').value
         self.gnd_z = self.get_parameter('ground_plane_z').value
+        
         self.pose_age_tol = self.get_parameter('pose_age_tolerance_s').value
         
-        if self.has_calib:
-            self.projector = RaycastProjector(fx, fy, cx, cy, dists, mxyz, mrpy)
-            self.get_logger().info("[VISION] RaycastProjector ENABLED with provided configuration.")
-        else:
-            self.projector = None
-            self.get_logger().warn("[VISION] Running WITHOUT valid camera calibration. Position mapping will be SKIPPED.")
+        # Safe Refactored Validators
+        self.validator = VisionConfigValidator(
+            has_calib=self.has_calib, has_mount=self.has_mount, has_ground_ref=self.has_ground_ref,
+            cam_model=self.cam_model, calib_width=self.calib_width, calib_height=self.calib_height,
+            cam_fx=self.cam_fx, cam_fy=self.cam_fy, cam_cx=self.cam_cx, cam_cy=self.cam_cy,
+            cam_dists=self.cam_dists
+        )
+        
+        self.projector = RaycastProjector(
+            self.cam_fx, self.cam_fy, self.cam_cx, self.cam_cy, 
+            self.cam_dists, self.mount_xyz, self.mount_rpy)
 
         self.bridge = CvBridge()
         self.latest_frame = None
@@ -214,7 +236,6 @@ class VisionNode(Node):
                 
             frame_age = now - self.latest_frame_ts
             if frame_age > 1.0:
-                # self.get_logger().warn("Camera frame is too old.")
                 return
                 
             try:
@@ -267,11 +288,15 @@ class VisionNode(Node):
                     'metric_valid': False, 'reason': 'NOT_COMPUTED'
                 }
                 
-                if not self.has_calib:
-                    det_dict['reason'] = 'NO_CALIBRATION'
-                elif not valid_pose:
-                    det_dict['reason'] = 'POSE_STALE_OR_MISSING'
-                else:
+                # Use separated Config Validator logic mapping
+                img_h, img_w = cv_image.shape[:2]
+                m_valid, reason = self.validator.validate(img_w, img_h)
+                
+                if m_valid and not valid_pose:
+                    reason = "POSE_STALE_OR_MISSING"
+                    m_valid = False
+
+                if m_valid:
                     px = self.latest_pose.pose.position.x
                     py = self.latest_pose.pose.position.y
                     pz = self.latest_pose.pose.position.z
@@ -293,6 +318,8 @@ class VisionNode(Node):
                         det_dict['reason'] = 'OK'
                     else:
                         det_dict['reason'] = proj['reason']
+                else:
+                    det_dict['reason'] = reason
 
                 current_detections.append(det_dict)
                 
@@ -315,8 +342,6 @@ class VisionNode(Node):
             d.bbox_h = det['h']
             
             # The receiver knows this is an ENU mapping if they inspect header frame_id.
-            # Local translation from ENU to NED is handled by the Jetson-Lua adapter, 
-            # NOT the vision node, as the vision node shouldn't mangle its own frame's conventions.
             d.position_valid = det['metric_valid']
             d.local_x = det['metric_x']
             d.local_y = det['metric_y']
