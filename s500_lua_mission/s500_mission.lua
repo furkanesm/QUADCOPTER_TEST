@@ -128,6 +128,14 @@ local STATUS_NAMES = {
     [STATUS_GCS_DELIVERED]    = "GCS_DELIVERED"
 }
 
+-- MAVLink Jetson Protokol Sabitleri (vision_lua_protocol.md)
+local STATUS_LIVELINESS        = 0xAA  -- 170: Jetson canlılık/sağlık durumu
+local STATUS_APP_ACK           = 0xAB  -- 171: Lua'dan Jetson'a özel APP_ACK teyidi
+local STATUS_SESSION_START     = 0xAC  -- 172: Jetson oturum açma isteği
+local PROTOCOL_VERSION         = 1.0   -- Desteklenen protokol sürümü (param7)
+local COMPANION_SYSID          = 1     -- Companion bilgisayar System ID
+local COMPANION_COMPID         = 191   -- Companion bilgisayar Component ID
+
 -- Uçuş Geometrisi ve Tolerans Yapılandırması
 local HEDEF_IRTIFA_M          = 33.0   -- Hedef seyir irtifası (m)
 local IRTIFA_ALT_SINIR_M      = 31.0   -- İrtifa kabul bandı alt sınır (m)
@@ -179,6 +187,12 @@ local SEQ_ESIGI             = -1       -- Durum girişinde güncellenen tazelik 
 local last_processed_seq    = -1       -- En son işlenmiş mesajın seq numarası
 local last_msg_time_ms      = nil      -- Son MAV_CMD_USER_1 mesaj zaman damgası
 local link_lost_logged      = false    -- Link koptu mesajının tekrarını önleme bayrağı
+local active_session_id     = nil      -- Jetson oturum açma (SESSION_START) ile doğrulanan kimlik
+local retired_sessions      = {}       -- Kapanmis/eski oturum ID'lerinin kaydi
+local accepted_messages     = {}       -- Aktif oturumda kabul edilen mesajlar: [seq] = {status, x, y, conf}
+local start_record          = nil      -- STATUS_START_FOUND kaydi: {x, y, conf, seq}
+local goal_record           = nil      -- STATUS_GOAL_FOUND kaydi: {x, y, conf, seq}
+local MAX_INT_24BIT         = 16777215 -- 2^24 - 1: IEEE-754 float tam sayi siniri
 
 -- ============================================================================
 -- YARDIMCI FONKSİYONLAR
@@ -245,6 +259,40 @@ end
 -- MAVLINK GELEN MESAJ AYRIŞTIRMA (COMMAND_LONG / MAV_CMD_USER_1)
 -- ============================================================================
 
+-- Ham sayı ve tam sayı geçerlilik denetleyicileri
+local function is_valid_raw_number(val)
+    return type(val) == "number" and val == val and val ~= math.huge and val ~= -math.huge
+end
+
+local function is_valid_raw_int(val, min_val, max_val)
+    if not is_valid_raw_number(val) then
+        return false
+    end
+    if val ~= math.floor(val) then
+        return false
+    end
+    if val < min_val or val > max_val then
+        return false
+    end
+    return true
+end
+
+-- Koordinat ve güvenilirlik denetleyicileri
+local function is_valid_coordinates(x, y)
+    return is_valid_raw_number(x) and is_valid_raw_number(y)
+end
+
+local function is_valid_confidence(conf, status)
+    if not is_valid_raw_number(conf) or conf < 0.0 or conf > 1.0 then
+        return false
+    end
+    -- Hedef tespit olaylarında (status 1..4) adaptör strictly conf > 0.0 şartı arar
+    if (status >= 1 and status <= 4) and conf <= 0.0 then
+        return false
+    end
+    return true
+end
+
 -- MAVLink COMMAND_LONG paketini ayrıştırır (Modül varsa birincil olarak modülü, yoksa yedek binary unpack kullanır)
 local function parse_command_long(raw_bytes)
     if not raw_bytes or #raw_bytes < 30 then
@@ -255,7 +303,21 @@ local function parse_command_long(raw_bytes)
     if has_mavlink_msgs and mavlink_msgs then
         local ok, parsed = pcall(mavlink_msgs.decode, raw_bytes, msg_map)
         if ok and parsed and parsed.command then
-            return parsed
+            return {
+                command          = parsed.command,
+                param1           = parsed.param1,
+                param2           = parsed.param2,
+                param3           = parsed.param3,
+                param4           = parsed.param4,
+                param5           = parsed.param5,
+                param6           = parsed.param6,
+                param7           = parsed.param7,
+                target_system    = parsed.target_system,
+                target_component = parsed.target_component,
+                confirmation     = parsed.confirmation,
+                src_sys          = parsed.sysid,
+                src_comp         = parsed.compid
+            }
         end
     end
 
@@ -266,40 +328,93 @@ local function parse_command_long(raw_bytes)
         if ok_magic and (magic == 0xFD or magic == 0xFE) then
             local ok_id, msgid = pcall(string.unpack, "<I3", raw_bytes, 10)
             if ok_id and msgid == MAVLINK_MSG_ID_COMMAND_LONG then
-                local ok_payload, p1, p2, p3, p4, p5, p6, p7, cmd = pcall(string.unpack, "<fffffffI2", raw_bytes, 13)
-                if ok_payload then
+                local ok_src, src_seq, src_sys, src_comp = pcall(string.unpack, "<BBB", raw_bytes, 7)
+                local ok_payload, p1, p2, p3, p4, p5, p6, p7, cmd, tgt_sys, tgt_comp, conf = pcall(string.unpack, "<fffffffI2BBB", raw_bytes, 13)
+                if ok_payload and ok_src then
                     return {
-                        command = cmd,
-                        param1  = p1,
-                        param2  = p2,
-                        param3  = p3,
-                        param4  = p4,
-                        param5  = p5,
-                        param6  = p6,
-                        param7  = p7
+                        command          = cmd,
+                        param1           = p1,
+                        param2           = p2,
+                        param3           = p3,
+                        param4           = p4,
+                        param5           = p5,
+                        param6           = p6,
+                        param7           = p7,
+                        target_system    = tgt_sys,
+                        target_component = tgt_comp,
+                        confirmation     = conf,
+                        src_sys          = src_sys,
+                        src_comp         = src_comp
                     }
                 end
             end
         end
     end
 
-    -- Durum B: Saf Payload (Offset 1'den başlayan 7 float + 1 uint16)
-    if #raw_bytes >= 30 then
-        local ok_raw, p1, p2, p3, p4, p5, p6, p7, cmd = pcall(string.unpack, "<fffffffI2", raw_bytes, 1)
+    -- Durum B: Saf Payload (Header yok, kaynak ayrıştırılamaz -> src_sys ve src_comp nil döner)
+    if #raw_bytes >= 33 then
+        local ok_raw, p1, p2, p3, p4, p5, p6, p7, cmd, tgt_sys, tgt_comp, conf = pcall(string.unpack, "<fffffffI2BBB", raw_bytes, 1)
         if ok_raw and cmd == MAV_CMD_USER_1 then
             return {
-                command = cmd,
-                param1  = p1,
-                param2  = p2,
-                param3  = p3,
-                param4  = p4,
-                param5  = p5,
-                param6  = p6,
-                param7  = p7
+                command          = cmd,
+                param1           = p1,
+                param2           = p2,
+                param3           = p3,
+                param4           = p4,
+                param5           = p5,
+                param6           = p6,
+                param7           = p7,
+                target_system    = tgt_sys,
+                target_component = tgt_comp,
+                confirmation     = conf,
+                src_sys          = nil,
+                src_comp         = nil
             }
         end
     end
 
+    return nil
+end
+
+-- Jetson'a APP_ACK (STATUS_APP_ACK = 0xAB) yanıtı gönderme
+local function send_app_ack(acked_type, result, acked_seq, acked_sess, chan)
+    chan = chan or 0
+    local target_sys = COMPANION_SYSID
+    local target_comp = COMPANION_COMPID
+
+    local msg_table = {
+        param1           = tonumber(acked_type) or 0.0,
+        param2           = tonumber(result) or 0.0,
+        param3           = 0.0,
+        param4           = tonumber(acked_seq) or 0.0,
+        param5           = tonumber(STATUS_APP_ACK) or 171.0,
+        param6           = tonumber(acked_sess) or 0.0,
+        param7           = tonumber(PROTOCOL_VERSION) or 1.0,
+        command          = MAV_CMD_USER_1,
+        target_system    = target_sys,
+        target_component = target_comp,
+        confirmation     = 0
+    }
+
+    if mavlink and mavlink.send_chan then
+        if has_mavlink_msgs and mavlink_msgs and mavlink_msgs.encode then
+            local ok, id, payload = pcall(mavlink_msgs.encode, "COMMAND_LONG", msg_table)
+            if ok and id and payload then
+                local send_ok = mavlink:send_chan(chan, id, payload)
+                return (send_ok == true)
+            end
+        end
+        local ok, payload = pcall(string.pack, "<fffffffI2BBB",
+            msg_table.param1, msg_table.param2, msg_table.param3,
+            msg_table.param4, msg_table.param5, msg_table.param6, msg_table.param7,
+            msg_table.command, msg_table.target_system, msg_table.target_component, msg_table.confirmation
+        )
+        if ok and payload then
+            local send_ok = mavlink:send_chan(chan, MAVLINK_MSG_ID_COMMAND_LONG, payload)
+            return (send_ok == true)
+        end
+    end
+    return false
 end
 
 -- Kuyruktaki tüm MAVLink mesajlarını tüketir, SEQ_ESIGI üzerindeki en son geçerli eylemi döndürür
@@ -311,64 +426,227 @@ local function process_mavlink_queue(current_time_ms)
     end
 
     while true do
-        local raw_msg, _ = mavlink:receive_chan()
+        local raw_msg, chan = mavlink:receive_chan()
         if not raw_msg then
             break
         end
 
         local cmd = parse_command_long(raw_msg)
         if cmd and cmd.command == MAV_CMD_USER_1 then
-            last_msg_time_ms = current_time_ms
+            -- 1. Kaynak Adres Doğrulaması (Eksikse veya yetkisizse mesaj reddedilir)
+            if cmd.src_sys == nil or cmd.src_comp == nil then
+                log_warn("Kaynak system veya component ayrilamadi! Mesaj reddedildi.")
+                goto continue_loop
+            end
+            if cmd.src_sys ~= COMPANION_SYSID or cmd.src_comp ~= COMPANION_COMPID then
+                log_warn(string.format("Yetkisiz kaynak adresi (sys=%d, comp=%d)! Mesaj reddedildi.", cmd.src_sys, cmd.src_comp))
+                goto continue_loop
+            end
 
-            -- Link koptu bayrağı aktifse bağlantının geri geldiğini bildir
-            if link_lost_logged then
-                link_lost_logged = false
-                log_info("Jetson ile link yeniden kuruldu.")
+            -- 2. Hedef Adres Doğrulaması (Eksikse veya geçersizse mesaj reddedilir)
+            if cmd.target_system == nil or cmd.target_component == nil then
+                log_warn("target_system veya target_component ayrilamadi! Mesaj reddedildi.")
+                goto continue_loop
+            end
+            if cmd.target_system ~= 1 or (cmd.target_component ~= 1 and cmd.target_component ~= 0) then
+                log_warn(string.format("Gecersiz hedef adresi (sys=%s, comp=%s)! Mesaj reddedildi.",
+                    tostring(cmd.target_system), tostring(cmd.target_component)))
+                goto continue_loop
+            end
+
+            -- 3. Protokol Sürümü Doğrulaması (Yuvarlama yok, doğrudan PROTOCOL_VERSION karşılaştırması)
+            if not is_valid_raw_number(cmd.param7) or cmd.param7 ~= PROTOCOL_VERSION then
+                log_warn(string.format("Desteklenmeyen protokol surumu: %s! Mesaj reddedildi.", tostring(cmd.param7)))
+                goto continue_loop
+            end
+
+            -- 4. Status Alanı Ham Doğrulaması (Sayı, sonlu, tam sayı, protokol aralığı: 0..5 veya 0xAA veya 0xAC)
+            local status = cmd.param5
+            local is_status_valid = is_valid_raw_int(status, 0, 5) or status == STATUS_LIVELINESS or status == STATUS_SESSION_START
+            if not is_status_valid then
+                log_warn(string.format("Bilinmeyen veya gecersiz status (%s) alindi! Reddedildi.", tostring(status)))
+                goto continue_loop
+            end
+
+            -- 5. Session ID Ham Doğrulaması (Sayı, sonlu, tam sayı, 1 <= session_id <= 16777215)
+            local sess_id = cmd.param6
+            if not is_valid_raw_int(sess_id, 1, MAX_INT_24BIT) then
+                log_warn(string.format("Gecersiz session_id (%s)! Mesaj reddedildi.", tostring(sess_id)))
+                if status == STATUS_SESSION_START then
+                    send_app_ack(status, 1, cmd.param4 or 0, 0, chan)
+                end
+                goto continue_loop
+            end
+
+            -- 6. Sequence Numarası Ham Doğrulaması (Sayı, sonlu, tam sayı, liveliness için >= 0, diğerleri için 1..16777215)
+            local seq = cmd.param4
+            local min_seq = (status == STATUS_LIVELINESS) and 0 or 1
+            if not is_valid_raw_int(seq, min_seq, MAX_INT_24BIT) then
+                log_warn(string.format("Gecersiz seq (%s) alindi! Mesaj reddedildi.", tostring(seq)))
+                if status ~= STATUS_LIVELINESS then
+                    send_app_ack(status, 1, 0, sess_id, chan)
+                end
+                goto continue_loop
+            end
+
+            -- 7. Canlılık Mesajı (0xAA: STATUS_LIVELINESS)
+            if status == STATUS_LIVELINESS then
+                if active_session_id and sess_id == active_session_id then
+                    last_msg_time_ms = current_time_ms
+                    if link_lost_logged then
+                        link_lost_logged = false
+                        log_info("Jetson ile link yeniden kuruldu.")
+                    end
+                else
+                    log_warn(string.format("Bilinmeyen veya uyumsuz oturumdan canlilik paketi (Sess: %d, Aktif: %s)!",
+                        sess_id, tostring(active_session_id)))
+                end
+                goto continue_loop
+            end
+
+            -- 8. Oturum Açma Mesajı (0xAC: STATUS_SESSION_START)
+            if status == STATUS_SESSION_START then
+                if sess_id == active_session_id then
+                    -- Aynı oturumun tekrar isteği: sayaçları sıfırlamadan ACK'yi tekrarla
+                    log_info(string.format("Ayni oturum (ID: %d) icin tekrar SESSION_START alindi, ACK gonderildi.", sess_id))
+                    last_msg_time_ms = current_time_ms
+                    if link_lost_logged then
+                        link_lost_logged = false
+                        log_info("Jetson ile link yeniden kuruldu.")
+                    end
+                    send_app_ack(status, 0, seq, sess_id, chan)
+                elseif retired_sessions[sess_id] then
+                    -- Gecikmiş / kapanmış eski oturum isteği: REDDEDİLDİ (last_msg_time_ms güncellenmez)
+                    log_warn(string.format("Gecikmis/kapanmis eski oturum (ID: %d) istegi alindi! Reddedildi.", sess_id))
+                    send_app_ack(status, 1, seq, sess_id, chan)
+                else
+                    -- Geçerli YENİ oturum!
+                    if active_session_id then
+                        retired_sessions[active_session_id] = true
+                        log_info(string.format("Eski oturum (ID: %d) kapatildi/emekliye ayrildi.", active_session_id))
+                    end
+                    active_session_id = sess_id
+                    accepted_messages = {}
+                    start_record = nil
+                    goal_record = nil
+                    latest_action_event = nil   -- Kuyruktaki eski oturuma ait eylemi temizle!
+                    last_processed_seq = -1
+                    SEQ_ESIGI = -1              -- Yeni oturumun sıra düzenine uygun birlikte başlatıldı!
+                    last_msg_time_ms = current_time_ms
+                    if link_lost_logged then
+                        link_lost_logged = false
+                        log_info("Jetson ile link yeniden kuruldu.")
+                    end
+                    send_app_ack(status, 0, seq, sess_id, chan)
+                    log_info(string.format("Yeni Jetson oturumu basariyla acildi (Session ID: %d, Seq: %d).", sess_id, seq))
+                end
+                goto continue_loop
+            end
+
+            -- 9. Aktif Oturum Kontrolü (Diğer tüm durumlar için aktif oturum zorunludur)
+            if not active_session_id or sess_id ~= active_session_id then
+                log_warn(string.format("Aktif oturum disinda mesaj (Mesaj Sess: %d, Aktif: %s)! Reddedildi.",
+                    sess_id, tostring(active_session_id)))
+                send_app_ack(status, 1, seq, sess_id, chan)
+                goto continue_loop
             end
 
             local x          = cmd.param1
             local y          = cmd.param2
             local confidence = cmd.param3
-            local seq        = math.floor(cmd.param4 + 0.5)
-            local status     = math.floor(cmd.param5 + 0.5)
 
-            -- 1. Status Değeri Doğrulaması (Yalnızca 0-5 arası kabul edilir)
-            if status < 0 or status > 5 then
-                log_warn(string.format("Bilinmeyen status (%s) alindi! Mesaj yok sayildi.", tostring(cmd.param5)))
-            
-            -- 2. Tazelik Denetimi: Sadece seq > SEQ_ESIGI olan mesajlar işlenir
-            elseif seq <= SEQ_ESIGI then
-                -- Bayat veya önceki duruma ait mesaj, sessizce yoksay veya gerekirse debug log
-            else
-                -- Geçerli yeni mesaj, en son işlenmiş seq olarak kaydet
-                if seq > last_processed_seq then
-                    last_processed_seq = seq
+            -- 10. Koordinat ve Güvenilirlik (Confidence) Doğrulaması
+            if not is_valid_coordinates(x, y) then
+                log_warn(string.format("Gecersiz x/y koordinatlari (x=%s, y=%s)! Mesaj reddedildi.", tostring(x), tostring(y)))
+                send_app_ack(status, 1, seq, sess_id, chan)
+                goto continue_loop
+            end
+
+            if not is_valid_confidence(confidence, status) then
+                log_warn(string.format("Gecersiz confidence (%.3f, status=%d) alindi! Mesaj reddedildi.", confidence, status))
+                send_app_ack(status, 1, seq, sess_id, chan)
+                goto continue_loop
+            end
+
+            -- 11. Tekrar Mesaj ve İçerik Doğrulaması (Toleranssız birebir eşitlik)
+            if accepted_messages[seq] then
+                local prev = accepted_messages[seq]
+                if prev.status == status and prev.x == x and prev.y == y and prev.conf == confidence then
+                    -- Birebir aynı içerikle tekrar iletimi: Başarılı ACK tekrarla, aksiyon üretme
+                    send_app_ack(status, 0, seq, sess_id, chan)
+                    last_msg_time_ms = current_time_ms
+                    if link_lost_logged then
+                        link_lost_logged = false
+                        log_info("Jetson ile link yeniden kuruldu.")
+                    end
+                    log_info(string.format("Tekrar mesaj basariyla teyit edildi (Seq: %d, Status: %d). Yeniden islenmedi.", seq, status))
+                else
+                    -- Aynı seq ancak farklı içerik: Başarısızlık ACK'si (result=1) gönder (last_msg_time_ms DEĞİŞTİRİLMEZ)
+                    send_app_ack(status, 1, seq, sess_id, chan)
+                    log_warn(string.format("Ayni seq (%d) icin farkli icerik alindi! Reddedildi.", seq))
                 end
+                goto continue_loop
+            end
 
-                local status_name = STATUS_NAMES[status] or tostring(status)
+            -- 12. Durum Tazelik Eşiği Kontrolü (SEQ_ESIGI)
+            if seq <= SEQ_ESIGI then
+                log_warn(string.format("Bayat mesaj (Seq: %d <= SEQ_ESIGI: %d). Reddedildi.", seq, SEQ_ESIGI))
+                send_app_ack(status, 1, seq, sess_id, chan)
+                goto continue_loop
+            end
 
-                -- Bilgi Amaçlı Olaylar (0, 1, 2, 5): Yalnızca loglanır, durum geçişi tetiklemez
-                if status == STATUS_NO_DETECTION then
-                    log_info(string.format("Jetson Bildirimi: %s (Seq: %d, Conf: %.2f)", status_name, seq, confidence))
-                elseif status == STATUS_START_FOUND then
-                    log_info(string.format("Jetson Bildirimi: %s (Seq: %d, Conf: %.2f) - Bilgi amacli, aksiyon yok", status_name, seq, confidence))
-                elseif status == STATUS_GOAL_FOUND then
-                    log_info(string.format("Jetson Bildirimi: %s (Seq: %d, Conf: %.2f) - Bilgi amacli, aksiyon yok", status_name, seq, confidence))
-                elseif status == STATUS_GCS_DELIVERED then
-                    log_info(string.format("Jetson Bildirimi: %s (Seq: %d) - Bilgi amacli, aksiyon yok", status_name, seq))
+            -- 13. Yeni Geçerli Mesajın Kabul Edilmesi ve İşlenmesi
+            accepted_messages[seq] = {
+                status = status,
+                x      = x,
+                y      = y,
+                conf   = confidence
+            }
+            if seq > last_processed_seq then
+                last_processed_seq = seq
+            end
 
-                -- Aksiyon Tetikleyen Olaylar (3: GOTO_OBSERVATION, 4: ROUTE_READY)
-                elseif status == STATUS_GOTO_OBSERVATION or status == STATUS_ROUTE_READY then
-                    latest_action_event = {
-                        status     = status,
-                        seq        = seq,
-                        x          = x,
-                        y          = y,
-                        confidence = confidence
-                    }
-                end
+            -- Mesaj kabul edildi: Zaman damgası ve link durumu güncellenir
+            last_msg_time_ms = current_time_ms
+            if link_lost_logged then
+                link_lost_logged = false
+                log_info("Jetson ile link yeniden kuruldu.")
+            end
+
+            -- Başarı teyidi (APP_ACK result=0)
+            send_app_ack(status, 0, seq, sess_id, chan)
+
+            local status_name = STATUS_NAMES[status] or tostring(status)
+
+            -- Bilgi Amaçlı Olaylar (0, 1, 2, 5): Yalnızca loglanır, durum geçişi tetiklemez
+            if status == STATUS_NO_DETECTION then
+                log_info(string.format("Jetson Bildirimi: %s (Seq: %d, Conf: %.2f)", status_name, seq, confidence))
+            elseif status == STATUS_START_FOUND then
+                start_record = { x = x, y = y, conf = confidence, seq = seq }
+                log_info(string.format("Jetson Bildirimi: %s (Seq: %d, Hedef: [%.1f, %.1f], Conf: %.2f) - Kaydedildi.",
+                    status_name, seq, x, y, confidence))
+            elseif status == STATUS_GOAL_FOUND then
+                goal_record = { x = x, y = y, conf = confidence, seq = seq }
+                log_info(string.format("Jetson Bildirimi: %s (Seq: %d, Hedef: [%.1f, %.1f], Conf: %.2f) - Kaydedildi.",
+                    status_name, seq, x, y, confidence))
+            elseif status == STATUS_GCS_DELIVERED then
+                log_info(string.format("Jetson Bildirimi: %s (Seq: %d) - Bilgi amacli, aksiyon yok", status_name, seq))
+
+            -- Aksiyon Tetikleyen Olaylar (3: GOTO_OBSERVATION, 4: ROUTE_READY)
+            elseif status == STATUS_GOTO_OBSERVATION or status == STATUS_ROUTE_READY then
+                latest_action_event = {
+                    status     = status,
+                    seq        = seq,
+                    x          = x,
+                    y          = y,
+                    confidence = confidence
+                }
+                log_info(string.format("Aksiyon tetiklendi: %s (Seq: %d, Hedef: [%.1f, %.1f], Conf: %.2f)",
+                    status_name, seq, x, y, confidence))
             end
         end
+
+        ::continue_loop::
     end
 
     return latest_action_event
@@ -830,4 +1108,33 @@ end
 -- SCRIPT GİRİŞ NOKTASI
 -- ============================================================================
 log_info("S500 Otonom Gorev Scripti yuklendi. BEKLEME durumunda tetikleme bekleniyor...")
+
+if _G._TEST_ENV then
+    return {
+        update = update,
+        change_state = change_state,
+        process_mavlink_queue = process_mavlink_queue,
+        parse_command_long = parse_command_long,
+        send_app_ack = send_app_ack,
+        is_valid_confidence = is_valid_confidence,
+        is_valid_coordinates = is_valid_coordinates,
+        is_valid_raw_int = is_valid_raw_int,
+        is_valid_raw_number = is_valid_raw_number,
+        get_current_state = function() return current_state end,
+        get_active_session_id = function() return active_session_id end,
+        get_last_msg_time_ms = function() return last_msg_time_ms end,
+        get_last_processed_seq = function() return last_processed_seq end,
+        get_SEQ_ESIGI = function() return SEQ_ESIGI end,
+        set_state = function(s) current_state = s; state_entry_time_ms = get_time_ms() end,
+        set_state_entry_time_ms = function(t) state_entry_time_ms = t end,
+        set_last_msg_time_ms = function(t) last_msg_time_ms = t end,
+        set_last_processed_seq = function(s) last_processed_seq = s end,
+        set_SEQ_ESIGI = function(s) SEQ_ESIGI = s end,
+        get_start_record = function() return start_record end,
+        get_goal_record = function() return goal_record end,
+        get_accepted_messages = function() return accepted_messages end,
+        get_retired_sessions = function() return retired_sessions end,
+    }
+end
+
 return update()
