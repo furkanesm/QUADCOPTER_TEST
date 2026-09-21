@@ -694,6 +694,9 @@ local function update()
     -- Tetikleme (RC switch veya GUIDED moda geçiş) gelene kadar bekle.
     -- ========================================================================
     if current_state == STATE_BEKLEME then
+        -- Yerde DISARMED iken MAVLink kuyrugunu tuket (SESSION_START el sikismasi ve canlilik)
+        process_mavlink_queue(now_ms)
+
         local rc_triggered = false
         if rc and rc.get_aux_cached then
             -- Scripting 1 aux fonksiyonu (300) kontrol edilir
@@ -721,6 +724,9 @@ local function update()
     -- - GUIDED moda geç, arm et, KALKIŞ'a geç.
     -- ========================================================================
     elseif current_state == STATE_HAZIRLIK then
+        -- Ornekleme sirasinda canlilik mesajlarini tuket (kuyruk tasmasini engelle)
+        process_mavlink_queue(now_ms)
+
         -- A. Konum Örneklemesi
         local cur_pos = ahrs:get_relative_position_NED_origin()
         if not cur_pos then
@@ -823,6 +829,9 @@ local function update()
     -- - 2 saniye kararlılık sonrası HEDEF_BEKLE'ye geçilir.
     -- ========================================================================
     elseif current_state == STATE_KALKIS then
+        -- Tirmanis boyunca gelen canlilik mesajlarini tuket (20 mesajlik kuyruk tasmasin)
+        process_mavlink_queue(now_ms)
+
         kalkis_hedef_kuzey = BASLANGIC_KONUMU.kuzey + KALKIS_ILERELEME_M * math.cos(ILERI_YAW)
         kalkis_hedef_dogu  = BASLANGIC_KONUMU.dogu  + KALKIS_ILERELEME_M * math.sin(ILERI_YAW)
         kalkis_hedef_z     = BASLANGIC_KONUMU.z - HEDEF_IRTIFA_M
@@ -1109,7 +1118,7 @@ end
 -- ============================================================================
 log_info("S500 Otonom Gorev Scripti yuklendi. BEKLEME durumunda tetikleme bekleniyor...")
 
-if _G._TEST_ENV then
+if _TEST_ENV then
     return {
         update = update,
         change_state = change_state,
