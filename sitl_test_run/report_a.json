@@ -1,0 +1,28 @@
+{
+  "scenario": "a",
+  "passed": true,
+  "duration_s": 178.26,
+  "lua_sha256": "d70ccdb8da097ee3e9fd9ee006686c34f55432ac362efa2867f5a9534c1013b4",
+  "sitl_version": "ArduCopter V4.7.1 (dbe79216)",
+  "active_disarm_delay_s": 10.0,
+  "failure_reasons": [],
+  "telemetry_metrics": {
+    "takeoff_freeze_pos_ned": [
+      0.002452236134558916,
+      -0.0026945217978209257,
+      0.006622734945267439
+    ],
+    "takeoff_freeze_yaw_deg": -4.64,
+    "kalkis_dist_achieved_m": 0.034,
+    "kalkis_alt_achieved_m": 32.985,
+    "obs_dist_achieved_m": null,
+    "return_dist_achieved_m": 0.019,
+    "touchdown_alt_achieved_m": -0.003,
+    "min_cruise_alt_m": 32.978,
+    "max_cruise_alt_m": 33.001,
+    "cruise_altitude_breached": false,
+    "was_armed_seen": true,
+    "final_disarmed_confirmed": true
+  },
+  "log_count": 30
+}
