@@ -1,0 +1,130 @@
+{
+  "timestamp": "2026-09-22 07:15:21",
+  "scope": "Sentetik DetectionArray -> Gercek Adaptor (mavlink_mission_commander.py) -> SITL Lua (s500_mission.lua)",
+  "duration_s": 15.94,
+  "overall_passed": false,
+  "critical_failure_occurred": false,
+  "lua_sha256": "17efa6e5889d3ed78ef1bae3467b11f7307704ec27eca0932466234a90d19c9b",
+  "failure_reasons": [],
+  "scenarios": {
+    "1_handshake": {
+      "status": "PASS",
+      "session_id": 3844032,
+      "event": "HANDSHAKE_ACCEPTED:1",
+      "evidence_log": "[S500 LUA] Yeni Jetson oturumu basariyla acildi (Session ID: 3844032, Seq: 1)."
+    },
+    "2_liveliness_stream": {
+      "status": "UNVERIFIED",
+      "measured_packets": 5,
+      "measured_hz": 2.0,
+      "reason": "Canl\u0131l\u0131k yay\u0131n\u0131 2 Hz olarak ba\u015far\u0131yla \u00f6l\u00e7\u00fcld\u00fc; ancak Lua i\u00e7 zaman damgas\u0131 (last_msg_time_ms) telemetriden do\u011frudan g\u00f6zlenemedi\u011fi i\u00e7in protokole uygun olarak UNVERIFIED kaydedildi."
+    },
+    "3_start_detection_flow": {
+      "status": "PASS",
+      "event": "ACCEPTED:2:1",
+      "evidence_log": "[S500 LUA] Jetson Bildirimi: START_FOUND (Seq: 2, Hedef: [10.0, 5.0], Conf: 0.92) - Kaydedildi.",
+      "verified_coordinates": [
+        10.0,
+        5.0
+      ],
+      "verified_confidence": 0.92
+    },
+    "4_goal_detection_flow": {
+      "status": "PASS",
+      "event": "ACCEPTED:3:2",
+      "evidence_log": "[S500 LUA] Jetson Bildirimi: GOAL_FOUND (Seq: 3, Hedef: [20.0, 15.0], Conf: 0.88) - Kaydedildi.",
+      "verified_coordinates": [
+        20.0,
+        15.0
+      ],
+      "verified_confidence": 0.88
+    },
+    "5_status_3_4_analysis": {
+      "status": "KAPSAM_DISI_EKSIK",
+      "finding": "Eksik \u00fcretici analizi tamamland\u0131: class_mapping.py yaln\u0131zca status 1 (START_FOUND) ve 2 (GOAL_FOUND) \u00fcretmektedir. Status 3 ve 4 \u00fcst seviye rota/g\u00f6rev planlay\u0131c\u0131 d\u00fc\u011f\u00fcm\u00fcne aittir ve g\u00f6r\u00fcnt\u00fc s\u0131n\u0131flar\u0131ndan t\u00fcretilmemi\u015ftir."
+    },
+    "6_disarmed_safety": {
+      "status": "PASS",
+      "evidence": "Heartbeat s\u00fcrekli taze, is_armed=False, armed_violation=False"
+    }
+  },
+  "gcs_lua_log_count": 19,
+  "gcs_lua_logs": [
+    {
+      "timestamp_mono": 7663.355922417,
+      "text": "Barometer 1 calibration complete"
+    },
+    {
+      "timestamp_mono": 7663.35603876,
+      "text": "Barometer 2 calibration complete"
+    },
+    {
+      "timestamp_mono": 7663.885545025,
+      "text": "ArduPilot Ready"
+    },
+    {
+      "timestamp_mono": 7663.885638834,
+      "text": "AHRS: DCM active"
+    },
+    {
+      "timestamp_mono": 7663.889708109,
+      "text": "[S500 LUA] MAVLink arayuzu baslatildi (COMMAND_LONG dinleniyor, MAV_CMD_USER_1 bloke edildi)."
+    },
+    {
+      "timestamp_mono": 7663.889841471,
+      "text": "[S500 LUA] S500 Otonom Gorev Scripti yuklendi. BEKLEME durumunda tetikleme bekleniyor..."
+    },
+    {
+      "timestamp_mono": 7664.181669214,
+      "text": "RC7: SaveWaypoint LOW"
+    },
+    {
+      "timestamp_mono": 7665.886663517,
+      "text": "EKF3 IMU0 initialised"
+    },
+    {
+      "timestamp_mono": 7665.886749561,
+      "text": "EKF3 IMU1 initialised"
+    },
+    {
+      "timestamp_mono": 7665.886815876,
+      "text": "AHRS: EKF3 active"
+    },
+    {
+      "timestamp_mono": 7667.001989592,
+      "text": "[S500 LUA] Yeni Jetson oturumu basariyla acildi (Session ID: 3844032, Seq: 1)."
+    },
+    {
+      "timestamp_mono": 7667.23014076,
+      "text": "EKF3 IMU1 tilt alignment complete"
+    },
+    {
+      "timestamp_mono": 7667.235863723,
+      "text": "EKF3 IMU0 tilt alignment complete"
+    },
+    {
+      "timestamp_mono": 7667.32947248,
+      "text": "EKF3 IMU1 MAG0 initial yaw alignment complete"
+    },
+    {
+      "timestamp_mono": 7667.334749142,
+      "text": "EKF3 IMU0 MAG0 initial yaw alignment complete"
+    },
+    {
+      "timestamp_mono": 7671.054307314,
+      "text": "[S500 LUA] Jetson Bildirimi: START_FOUND (Seq: 2, Hedef: [10.0, 5.0], Conf: 0.92) - Kaydedildi."
+    },
+    {
+      "timestamp_mono": 7671.242973509,
+      "text": "GPS 1: probing for u-blox at 230400 baud"
+    },
+    {
+      "timestamp_mono": 7671.260769047,
+      "text": "GPS 1: detected u-blox"
+    },
+    {
+      "timestamp_mono": 7674.992174211,
+      "text": "[S500 LUA] Jetson Bildirimi: GOAL_FOUND (Seq: 3, Hedef: [20.0, 15.0], Conf: 0.88) - Kaydedildi."
+    }
+  ]
+}

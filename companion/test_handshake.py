@@ -6,6 +6,9 @@ from unittest.mock import MagicMock, patch
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+_mocked_keys = ['rclpy', 'rclpy.node', 'rclpy.qos', 'rclpy.time', 'std_msgs', 'std_msgs.msg', 'std_srvs', 'std_srvs.srv', 'vision_interfaces', 'vision_interfaces.msg']
+_orig_modules = {k: sys.modules.get(k) for k in _mocked_keys}
+
 sys.modules['rclpy'] = MagicMock()
 sys.modules['rclpy.node'] = MagicMock()
 sys.modules['rclpy.qos'] = MagicMock()
@@ -24,26 +27,18 @@ sys.modules['vision_interfaces.msg'] = MagicMock()
 class DummyNode:
     def __init__(self, name):
         self.name = name
+        self._params = {}
+
     def declare_parameter(self, name, default):
         p = MagicMock()
         p.value = default
+        self._params[name] = p
         return p
+
     def get_parameter(self, name):
+        if name in self._params:
+            return self._params[name]
         p = MagicMock()
-        if name == 'mavlink_connection': p.value = 'udp:127.0.0.1:14551'
-        elif name == 'liveliness_hz': p.value = 2.0
-        elif name == 'retry_hz': p.value = 1.0
-        elif name == 'target_system': p.value = 1
-        elif name == 'target_component': p.value = 1
-        elif name == 'my_system_id': p.value = 1
-        elif name == 'my_component_id': p.value = 191
-        elif name == 'start_classes': p.value = ['start']
-        elif name == 'goal_classes': p.value = ['hedef']
-        elif name == 'data_stale_timeout_s': p.value = 2.0
-        elif name == 'event_expiry_s': p.value = 15.0
-        elif name == 'max_queue_size': p.value = 20
-        elif name == 'spatial_spam_dist_m': p.value = 2.0
-        elif name == 'spam_timeout_s': p.value = 10.0
         return p
     def get_logger(self):
         return MagicMock()
@@ -58,6 +53,7 @@ class DummyNode:
         return pub
         
     def create_service(self, *args, **kwargs): return MagicMock()
+    def create_client(self, *args, **kwargs): return MagicMock()
     def create_timer(self, *args, **kwargs): return MagicMock()
     def get_clock(self): 
         mock_clock = MagicMock()
@@ -96,6 +92,15 @@ def inject_rx(node, msg):
     node.master.recv_match.side_effect = mock_recv
     node.mavlink_rx_thread()
     node.process_rx_queue()
+
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_sys_modules():
+    yield
+    for k, v in _orig_modules.items():
+        if v is not None:
+            sys.modules[k] = v
+        elif k in sys.modules:
+            del sys.modules[k]
 
 @pytest.fixture
 def manual_time():
