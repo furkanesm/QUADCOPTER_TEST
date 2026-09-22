@@ -637,6 +637,7 @@ local function process_mavlink_queue(current_time_ms)
                 latest_action_event = {
                     status     = status,
                     seq        = seq,
+                    sess_id    = sess_id,
                     x          = x,
                     y          = y,
                     confidence = confidence
@@ -933,12 +934,13 @@ local function update()
         if event then
             if event.status == STATUS_GOTO_OBSERVATION then
                 HEDEF_KONUM = { x = event.x, y = event.y }
-                log_info(string.format("GOTO_OBSERVATION alindi (Seq: %d, Hedef: [%.1f, %.1f], Conf: %.2f). HEDEFE_GIT durumuna geciliyor.",
-                    event.seq, event.x, event.y, event.confidence))
+                log_info(string.format("GOTO_OBSERVATION alindi (Session ID: %d, Seq: %d, Hedef: [%.1f, %.1f], Conf: %.2f). HEDEFE_GIT durumuna geciliyor.",
+                    event.sess_id or active_session_id or 0, event.seq, event.x, event.y, event.confidence))
                 change_state(STATE_HEDEFE_GIT)
                 return update, UPDATE_RATE_MS
             elseif event.status == STATUS_ROUTE_READY then
-                log_info(string.format("ROUTE_READY alindi (Seq: %d). Dogrudan DONUS durumuna geciliyor.", event.seq))
+                log_info(string.format("ROUTE_READY alindi (Session ID: %d, Seq: %d). Dogrudan DONUS durumuna geciliyor.",
+                    event.sess_id or active_session_id or 0, event.seq))
                 change_state(STATE_DONUS)
                 return update, UPDATE_RATE_MS
             end
@@ -1014,13 +1016,14 @@ local function update()
         local event = process_mavlink_queue(now_ms)
         if event then
             if event.status == STATUS_ROUTE_READY then
-                log_info(string.format("ROUTE_READY alindi (Seq: %d). DONUS durumuna geciliyor.", event.seq))
+                log_info(string.format("ROUTE_READY alindi (Session ID: %d, Seq: %d). DONUS durumuna geciliyor.",
+                    event.sess_id or active_session_id or 0, event.seq))
                 change_state(STATE_DONUS)
                 return update, UPDATE_RATE_MS
             elseif event.status == STATUS_GOTO_OBSERVATION then
                 HEDEF_KONUM = { x = event.x, y = event.y }
-                log_info(string.format("Yeni GOTO_OBSERVATION alindi (Seq: %d, Hedef: [%.1f, %.1f], Conf: %.2f). HEDEFE_GIT durumuna geciliyor.",
-                    event.seq, event.x, event.y, event.confidence))
+                log_info(string.format("Yeni GOTO_OBSERVATION alindi (Session ID: %d, Seq: %d, Hedef: [%.1f, %.1f], Conf: %.2f). HEDEFE_GIT durumuna geciliyor.",
+                    event.sess_id or active_session_id or 0, event.seq, event.x, event.y, event.confidence))
                 change_state(STATE_HEDEFE_GIT)
                 return update, UPDATE_RATE_MS
             end
