@@ -48,3 +48,14 @@ verify_passages.py
 run_img0002_review.py
 run_test_c.py
 verify_splits.py
+frame_000002.png
+frame_000003.png
+test_frame2_results/
+test_frame3_results/
+ast_analysis.json
+classify.txt
+diff_utf8.txt
+git_diff.txt
+git_status.txt
+status_utf8.txt
+offline_models/deneme.png

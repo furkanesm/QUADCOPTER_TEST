@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mission_node = s500_mission_fsm.mission_node:main',
+            'route_adapter_node = s500_mission_fsm.route_adapter:main',
         ],
     },
 )

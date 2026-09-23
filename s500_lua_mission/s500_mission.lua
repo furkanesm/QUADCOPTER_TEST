@@ -98,6 +98,7 @@ local STATE_INIS                  = 8
 local STATE_TAMAMLANDI            = 9
 local STATE_PILOT_MUDAHALESI      = 10
 local STATE_ILERI_HAREKET         = 11
+local STATE_ROUTE_EXECUTE         = 12
 
 local STATE_KALKIS                = STATE_DIKEY_TIRMANIS -- Geriye dönük uyumluluk
 
@@ -112,6 +113,7 @@ local STATE_NAMES = {
     [STATE_INIS]                  = "INIS",
     [STATE_TAMAMLANDI]            = "TAMAMLANDI",
     [STATE_PILOT_MUDAHALESI]      = "PILOT_MUDAHALESI",
+    [STATE_ROUTE_EXECUTE]         = "ROUTE_EXECUTE",
     [STATE_ILERI_HAREKET]         = "ILERI_HAREKET"
 }
 
@@ -167,6 +169,7 @@ local UPDATE_RATE_MS          = 100    -- Ana döngü frekansı (10 Hz)
 
 local current_state         = STATE_BEKLEME
 local state_entry_time_ms   = 0
+local mission_index         = 1
 
 -- Konum ve Yön Kayıtları
 local BASLANGIC_KONUMU      = nil      -- { kuzey = float, dogu = float, z = float }
@@ -1026,9 +1029,10 @@ local function update()
                 change_state(STATE_HEDEFE_GIT)
                 return update, UPDATE_RATE_MS
             elseif event.status == STATUS_ROUTE_READY then
-                log_info(string.format("ROUTE_READY alindi (Session ID: %d, Seq: %d). Dogrudan DONUS durumuna geciliyor.",
+                log_info(string.format("ROUTE_READY alindi (Session ID: %d, Seq: %d). ROUTE_EXECUTE durumuna geciliyor.",
                     event.sess_id or active_session_id or 0, event.seq))
-                change_state(STATE_DONUS)
+                mission_index = 1
+                change_state(STATE_ROUTE_EXECUTE)
                 return update, UPDATE_RATE_MS
             end
         end
@@ -1103,9 +1107,10 @@ local function update()
         local event = process_mavlink_queue(now_ms)
         if event then
             if event.status == STATUS_ROUTE_READY then
-                log_info(string.format("ROUTE_READY alindi (Session ID: %d, Seq: %d). DONUS durumuna geciliyor.",
+                log_info(string.format("ROUTE_READY alindi (Session ID: %d, Seq: %d). ROUTE_EXECUTE durumuna geciliyor.",
                     event.sess_id or active_session_id or 0, event.seq))
-                change_state(STATE_DONUS)
+                mission_index = 1
+                change_state(STATE_ROUTE_EXECUTE)
                 return update, UPDATE_RATE_MS
             elseif event.status == STATUS_GOTO_OBSERVATION then
                 HEDEF_KONUM = { x = event.x, y = event.y }
@@ -1131,6 +1136,36 @@ local function update()
             change_state(STATE_DONUS)
             return update, UPDATE_RATE_MS
         end
+
+    -- ========================================================================
+    -- YENI DURUM: ROUTE_EXECUTE (SADECE DISARMED TEST)
+    -- - mission:get_item() ile hedefleri cekip ekrana basar.
+    -- - set_target_pos_NED YAPMAZ!
+    -- ========================================================================
+    elseif current_state == STATE_ROUTE_EXECUTE then
+        local num_wp = mission:num_commands()
+        if num_wp <= 0 then
+            log_warn("HATA: Ardupilot hafizasinda mission kaydi yok. DONUS'e geciliyor.")
+            change_state(STATE_DONUS)
+            return update, UPDATE_RATE_MS
+        end
+
+        local wp_item = mission:get_item(mission_index)
+        local frame = wp_item:frame() -- Orijinal frame'i okur
+        local wp_x = wp_item:x() -- scaled lat if global frame
+        local wp_y = wp_item:y() -- scaled lon
+        local wp_z = wp_item:z() -- alt
+
+        log_info(string.format("[TEST PING] WP[%d/%d] Geri Okundu: X/Lat: %d, Y/Lon: %d, Z/Alt: %.2f, Frame: %d", 
+                  mission_index, num_wp-1, wp_x, wp_y, wp_z, frame))
+
+        mission_index = mission_index + 1
+        
+        if mission_index >= num_wp then
+            log_info(string.format("TEST PING TAMAMLANDI. (Toplam %d WP basariyla kalibre edildi) DONUS'e geciliyor.", num_wp))
+            change_state(STATE_DONUS)
+        end
+        return update, 1000 -- Daha yavas dongu ile testi kalabalik yapmadan bitir
 
     -- ========================================================================
     -- 7. DURUM: DÖNÜŞ

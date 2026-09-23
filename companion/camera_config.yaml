@@ -1,0 +1,26 @@
+camera:
+  sensor:
+    width_mm: 5.76
+    height_mm: 3.6
+  lens:
+    focal_length_mm: 3.6
+  image:
+    width_px: 1920
+    height_px: 1200
+  calibration:
+    # WARNING: Pinhole approximation (77 deg) does not match AR0234 datasheet (90 deg). 
+    # This indicates heavy lens distortion. is_calibrated MUST be set to true after running calibrate_camera.py
+    is_calibrated: false
+    # fx, fy, cx, cy
+    camera_matrix: []
+    # k1, k2, p1, p2, k3
+    dist_coeffs: []
+  mount:
+    # Lever arm offset vector (meters) from IMU body frame to Camera optical center
+    # Placeholder values; pending empirical measurement.
+    offset_x_m: 0.0
+    offset_y_m: 0.0
+    offset_z_m: 0.0
+  assumptions:
+    # Fallback altitude if /mavros/local_position/pose is unavailable
+    default_altitude_m: 33.0
