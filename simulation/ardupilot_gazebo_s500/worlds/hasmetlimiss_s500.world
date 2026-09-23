@@ -54,7 +54,73 @@
     </model>
     <include>
       <uri>model://s500_custom_with_ardupilot</uri>
-      <pose>0 8 0.5 0 0 0</pose>
+      <pose>15.000000000 0.000000000 0.223955000 0.000000000 0.000000000 0.000000000</pose>
     </include>
+    <model name="yesil_zemin_80x80">
+      <static>true</static>
+      <pose>0 0 0.005955 0 0 0</pose>
+      <link name="zemin">
+        <visual name="kuzey">
+          <pose>0 25 0 0 0 0</pose>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 30</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.18 0.42 0.10 1</ambient>
+            <diffuse>0.24 0.55 0.14 1</diffuse>
+            <specular>0 0 0 1</specular>
+          </material>
+          <cast_shadows>false</cast_shadows>
+        </visual>
+        <visual name="guney">
+          <pose>0 -25 0 0 0 0</pose>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 30</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.18 0.42 0.10 1</ambient>
+            <diffuse>0.24 0.55 0.14 1</diffuse>
+            <specular>0 0 0 1</specular>
+          </material>
+          <cast_shadows>false</cast_shadows>
+        </visual>
+        <visual name="dogu">
+          <pose>25 0 0 0 0 0</pose>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>30 20</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.18 0.42 0.10 1</ambient>
+            <diffuse>0.24 0.55 0.14 1</diffuse>
+            <specular>0 0 0 1</specular>
+          </material>
+          <cast_shadows>false</cast_shadows>
+        </visual>
+        <visual name="bati">
+          <pose>-25 0 0 0 0 0</pose>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>30 20</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.18 0.42 0.10 1</ambient>
+            <diffuse>0.24 0.55 0.14 1</diffuse>
+            <specular>0 0 0 1</specular>
+          </material>
+          <cast_shadows>false</cast_shadows>
+        </visual>
+      </link>
+    </model>
   </world>
 </sdf>

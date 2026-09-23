@@ -21,3 +21,9 @@ Aşağıdaki bash betiği, bulunduğunuz dizini bularak Gazebo yol değişkenler
 cd simulation/ardupilot_gazebo_s500
 ./launch_hasmetlimiss.sh
 ```
+
+## Son Güncelleme (Yerel Checkpoint)
+- **Yeni 20x20 arazi:** Merkezinde 20x20 metre boşluk bulunan, dış ölçüleri 80x80 metre olan yeşil bir çevre alanı (çarpışma kutusu olmadan) z=-0.005955 seviyesinde eklenmiştir.
+- **S500 Başlangıç Pozu:** `15 0 0.223955 0 0 0` olarak ayarlandı.
+- Sahne duraklatılmış olarak açılmaktadır.
+- Yeşil alan fiziksel destek sağlamaz; bu arazide uçuş henüz doğrulanmamıştır.
