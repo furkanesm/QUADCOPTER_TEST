@@ -9,9 +9,12 @@ import threading
 import math
 import queue
 from pymavlink import mavutil
-from std_msgs.msg import String
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import Trigger
+from std_msgs.msg import String
+from mavros_msgs.srv import WaypointPush, WaypointPull
+from mavros_msgs.msg import Waypoint
+import yaml
 
 from vision_interfaces.msg import DetectionArray
 import sys
@@ -175,6 +178,16 @@ class MavlinkAdapterNode(Node):
         self._running = True
         self.session_id = random.randint(1, 16000000)
         
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'camera_config.yaml')
+        try:
+            with open(config_path, 'r') as f:
+                self.cam_config = yaml.safe_load(f)
+        except Exception as e:
+            self.get_logger().error(f"[ADAPTER] Failed to load camera_config.yaml: {e}")
+            self.cam_config = None
+            
+        self.current_alt = None
+        
         # Session states
         self.IDLE = 0
         self.STARTING = 1
@@ -209,12 +222,14 @@ class MavlinkAdapterNode(Node):
         self.acked_commands = {}
         self.seq_counter = 0
         self.last_sent_types = {1: None, 2: None, 3: None, 4: None}
-        
         self.sub_detections = self.create_subscription(
             DetectionArray, '/vision/detections', self.det_callback, qos_profile_sensor_data
         )
         self.sub_goto_obs = self.create_subscription(
             PoseStamped, '/mission/goto_observation', self.goto_observation_callback, 10
+        )
+        self.sub_local_pos = self.create_subscription(
+            PoseStamped, '/mavros/local_position/pose', self.local_pos_cb, qos_profile_sensor_data
         )
         self.pub_event_status = self.create_publisher(String, '/adapter/event_status', 10)
         
@@ -222,11 +237,118 @@ class MavlinkAdapterNode(Node):
         self.srv_stop = self.create_service(Trigger, '/adapter/stop_session', self.srv_stop_cb)
         self.srv_route_ready = self.create_service(Trigger, '/mission/route_ready', self.route_ready_srv_cb)
         
+        # Test Mission Upload
+        self.cli_wp_push = self.create_client(WaypointPush, '/mavros/mission/push')
+        self.cli_wp_pull = self.create_client(WaypointPull, '/mavros/mission/pull')
+        self.srv_test_route = self.create_service(Trigger, '/adapter/test_route_upload', self.test_route_upload_srv_cb)
+        
         self.retry_timer = self.create_timer(1.0 / self.retry_hz, self.retry_loop)
         self.live_timer = self.create_timer(1.0 / self.live_hz, self.liveliness_loop)
         
         self.rx_thread = threading.Thread(target=self.mavlink_rx_thread, daemon=True)
         self.rx_thread.start()
+
+    def local_pos_cb(self, msg: PoseStamped):
+        self.current_alt = msg.pose.position.z
+
+    def get_dynamic_gsd(self):
+        if not self.cam_config:
+            return 0.05
+        sensor_w = self.cam_config['camera']['sensor']['width_mm']
+        focal_l = self.cam_config['camera']['lens']['focal_length_mm']
+        img_w = self.cam_config['camera']['image']['width_px']
+        
+        alt = self.current_alt
+        if alt is None or alt <= 0.5:
+            alt = self.cam_config['camera']['assumptions']['default_altitude_m']
+            self.get_logger().debug(f"[ADAPTER] Real-time altitude unavailable or invalid ({self.current_alt}). Sticking to config default: {alt}m")
+            
+        gsd = (alt * sensor_w) / (focal_l * img_w)
+        return gsd
+
+    def test_route_upload_srv_cb(self, request, response):
+        if self.session_state != self.ACTIVE:
+            response.success = False
+            response.message = "Session not ACTIVE."
+            return response
+            
+        threading.Thread(target=self._test_route_upload_thread_func, daemon=True).start()
+        response.success = True
+        response.message = "Initiating DISARMED test mission upload in background..."
+        return response
+        
+    def _test_route_upload_thread_func(self):
+        import rclpy
+        self.get_logger().info("[ADAPTER TEST] Starting mock mission upload...")
+        
+        # Create a helper node for synchronous wait
+        helper = Node("_mock_upload_helper")
+        try:
+            cli_push = helper.create_client(WaypointPush, "/mavros/mission/push")
+            cli_pull = helper.create_client(WaypointPull, "/mavros/mission/pull")
+            
+            if not cli_push.wait_for_service(timeout_sec=5.0) or not cli_pull.wait_for_service(timeout_sec=5.0):
+                self.get_logger().error("[ADAPTER TEST] MAVROS mission services not available!")
+                return
+                
+            wp1 = Waypoint()
+            wp1.frame = 6 # GLOBAL_RELATIVE_ALT
+            wp1.command = 16 # MAV_CMD_NAV_WAYPOINT
+            wp1.is_current = True
+            wp1.autocontinue = True
+            wp1.param1 = 0.0
+            wp1.param2 = 1.0 # 1m accept radius
+            wp1.param3 = 0.0
+            wp1.param4 = 0.0
+            wp1.x_lat = 41.0
+            wp1.y_long = 29.0
+            wp1.z_alt = 33.0
+            
+            wp2 = Waypoint()
+            wp2.frame = 6
+            wp2.command = 16
+            wp2.is_current = False
+            wp2.autocontinue = True
+            wp2.param1 = 0.0
+            wp2.param2 = 1.0
+            wp2.param3 = 0.0
+            wp2.param4 = 0.0
+            wp2.x_lat = 41.0001
+            wp2.y_long = 29.0001
+            wp2.z_alt = 33.0
+            
+            req_push = WaypointPush.Request()
+            req_push.start_index = 0
+            req_push.waypoints = [wp1, wp2]
+            
+            self.get_logger().info("[ADAPTER TEST] Pushing 2 waypoints via MAVROS...")
+            f_push = cli_push.call_async(req_push)
+            rclpy.spin_until_future_complete(helper, f_push, timeout_sec=5.0)
+            res_push = f_push.result()
+            
+            if not res_push or not res_push.success:
+                self.get_logger().error("[ADAPTER TEST] WaypointPush failed!")
+                return
+                
+            self.get_logger().info("[ADAPTER TEST] Push successful. Pulling mission back...")
+            
+            req_pull = WaypointPull.Request()
+            f_pull = cli_pull.call_async(req_pull)
+            rclpy.spin_until_future_complete(helper, f_pull, timeout_sec=5.0)
+            res_pull = f_pull.result()
+            
+            if not res_pull or not res_pull.success:
+                self.get_logger().error("[ADAPTER TEST] WaypointPull failed!")
+                return
+                
+            self.get_logger().info(f"[ADAPTER TEST] Pull successful! Recovered {res_pull.wp_received} waypoints.")
+            
+            # Send ROUTE_READY
+            self.queue_command(4, 0.0, 0.0, 1.0, self.get_clock().now(), allowed_states=self.ALLOWED_STATES_ROUTE_READY)
+            self.get_logger().info("[ADAPTER TEST] Sent ROUTE_READY (Status=4).")
+            
+        finally:
+            helper.destroy_node()
 
     def get_next_seq(self):
         if self.seq_counter >= 16777215:

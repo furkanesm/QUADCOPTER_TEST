@@ -19,8 +19,8 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry
-from mavros_msgs.msg import State, ExtendedState
-from mavros_msgs.srv import CommandBool, SetMode, CommandTOL, MessageInterval, StreamRate, ParamPull
+from mavros_msgs.msg import State, ExtendedState, Waypoint
+from mavros_msgs.srv import CommandBool, SetMode, CommandTOL, MessageInterval, StreamRate, ParamPull, WaypointPush
 from rcl_interfaces.srv import SetParameters, GetParameters
 from rcl_interfaces.msg import Parameter as RosParameter, ParameterValue, ParameterType
 
@@ -115,6 +115,7 @@ class MavrosInterface:
         self._cli_land = self.node.create_client(CommandTOL, '/mavros/cmd/land')
         self._cli_set_msg_interval = self.node.create_client(MessageInterval, '/mavros/set_message_interval')
         self._cli_set_stream_rate = self.node.create_client(StreamRate, '/mavros/set_stream_rate')
+        self._cli_push_mission = self.node.create_client(WaypointPush, '/mavros/mission/push')
 
     # ==========================================
     # Callbacks (Sadece veri saklar, karar vermez)
@@ -477,5 +478,40 @@ class MavrosInterface:
                     f"[MAVROS] WP_SPD teyit uyuşmazlığı! Beklenen: {speed_mps:.2f} m/s, Okunan: {val:.2f} m/s"
                 )
                 return False
+            helper.destroy_node()
+
+    def push_mission(self, waypoints: List[Waypoint], timeout_sec: float = 5.0) -> bool:
+        """
+        Pushes a list of Waypoints to ArduPilot via MAVROS /mavros/mission/push service.
+        Uses a helper node to synchronously wait for the service call to complete.
+        """
+        import rclpy
+        helper = Node("_mission_push_helper")
+        try:
+            cli_push = helper.create_client(WaypointPush, "/mavros/mission/push")
+            
+            if not cli_push.wait_for_service(timeout_sec=timeout_sec):
+                self.node.get_logger().error("[MAVROS] /mavros/mission/push servisi bulunamadı!")
+                return False
+                
+            req = WaypointPush.Request()
+            req.start_index = 0
+            req.waypoints = waypoints
+            
+            f_p = cli_push.call_async(req)
+            rclpy.spin_until_future_complete(helper, f_p, timeout_sec=timeout_sec)
+            res = f_p.result()
+            
+            if not res:
+                self.node.get_logger().error("[MAVROS] push_mission çağrısı sonuç dönmedi veya zaman aşımına uğradı.")
+                return False
+                
+            if res.success:
+                self.node.get_logger().info(f"[MAVROS] {res.wp_transfered} waypoint başarıyla yüklendi.")
+                return True
+            else:
+                self.node.get_logger().error("[MAVROS] push_mission başarısız oldu!")
+                return False
         finally:
             helper.destroy_node()
+
