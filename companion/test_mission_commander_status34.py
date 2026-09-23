@@ -425,6 +425,7 @@ def test_11_takeoff_return_point_lock_and_disallowed_preflight_states():
     """11. Aşama 2: takeoff_return_point_ned kilitlenme logu ayrıştırması ve DIKEY_TIRMANIS/ILERI_HAREKET retleri."""
     node, events = create_test_node()
     node.session_state = node.ACTIVE
+    node.session_id = 99999
     
     # 1. DIKEY_TIRMANIS durumu gözlendiğinde Status 3 ve Status 4 reddedilmeli
     log_dikey = MockMavMsg("[S500 LUA] Durum Gecisi: HAZIRLIK -> DIKEY_TIRMANIS")
@@ -458,11 +459,71 @@ def test_11_takeoff_return_point_lock_and_disallowed_preflight_states():
     assert "REJECTED_FSM_STATE_NOT_ALLOWED:4:state_is_ILERI_HAREKET" in res2.message
 
     # 3. takeoff_return_point_ned kilitlendiğinde ayrıştırılmalı ve yayınlanmalı
-    log_lock = MockMavMsg("[S500 LUA] Ileri hareket tamamlandi ve kararlilik saglandi (Mesafe: 0.12m, Irtifa: 33.05m). takeoff_return_point_ned kilitlendi: [43.00, 20.00, -33.00]. HEDEF_BEKLE durumuna geciliyor.")
+    log_lock = MockMavMsg(f"[S500 LUA] Ileri hareket tamamlandi ve kararlilik saglandi (Mesafe: 0.12m, Irtifa: 33.05m). takeoff_return_point_ned kilitlendi (Session ID: {node.session_id}): [43.00, 20.00, -33.00]. HEDEF_BEKLE durumuna geciliyor.")
     node._handle_statustext_msg(log_lock)
     assert node.takeoff_return_point_ned == (43.0, 20.0)
-    assert any("TAKEOFF_RETURN_LOCKED:43.00:20.00" in e for e in events)
+    assert node.takeoff_return_point_ned_3d == (43.0, 20.0, -33.0)
+    assert any("TAKEOFF_RETURN_LOCKED:43.00:20.00:-33.00" in e for e in events)
     print("✓ Test 11: Aşama 2 - takeoff_return_point_ned kilitlenmesi ve ön uçuş fazı retleri başarıyla doğrulandı.")
+
+
+def test_12_return_path_invalidation_and_status4_gating():
+    """12. Dönüş rotası kabulü, boş rota ile temizleme ve Status 4 blokajı doğrulaması."""
+    from nav_msgs.msg import Path
+    node, events = create_test_node()
+    node.session_state = node.ACTIVE
+    node.session_id = 77777
+    node.lua_fsm_state = "HEDEF_BEKLE"
+    node.takeoff_return_point_ned_3d = (0.0, 0.0, 0.0)
+    node.takeoff_return_point_ned = (0.0, 0.0)
+
+    # 1. Geçerli bir dönüş rotası yayınlandığında kabul edilmeli
+    path_msg = Path()
+    path_msg.header.stamp = node.get_clock().now().to_msg()
+    path_msg.header.frame_id = f"ekf_origin_ned:session_{node.session_id}"
+
+    wp1 = PoseStamped()
+    wp1.header = path_msg.header
+    wp1.pose.position.x = 10.0
+    wp1.pose.position.y = 10.0
+    wp1.pose.position.z = -33.0  # ref_z (0.0) - target_cruise_alt (33.0) = -33.0
+
+    wp2 = PoseStamped()
+    wp2.header = path_msg.header
+    wp2.pose.position.x = 0.0
+    wp2.pose.position.y = 0.0
+    wp2.pose.position.z = -33.0
+
+    path_msg.poses = [wp1, wp2]
+    node.planner_path_callback(path_msg)
+
+    assert node.return_path is not None
+    assert node.return_path_session_id == node.session_id
+    assert any("RETURN_PATH_ACCEPTED:2:77777" in e for e in events)
+
+    # 2. Geçerli rota varken Status 4 kuyruğa alınabilmeli
+    req = Trigger.Request()
+    resp = Trigger.Response()
+    res = node.route_ready_srv_cb(req, resp)
+    assert res.success is True
+    assert "QUEUED" in res.message
+
+    # 3. Planlayıcıdan boş rota (< 2 waypoint) geldiğinde mevcut rota temizlenmeli!
+    empty_path = Path()
+    empty_path.header.stamp = node.get_clock().now().to_msg()
+    empty_path.header.frame_id = f"ekf_origin_ned:session_{node.session_id}"
+    empty_path.poses = []
+    node.planner_path_callback(empty_path)
+
+    assert node.return_path is None, "Boş rota adaptördeki return_path'i TEMİZLEMELİDİR!"
+    assert node.return_path_session_id is None
+    assert any("REJECTED_INSUFFICIENT_WAYPOINTS:0" in e for e in events)
+
+    # 4. Rota temizlendikten sonra Status 4 reddedilmeli!
+    res_blocked = node.route_ready_srv_cb(req, resp)
+    assert res_blocked.success is False
+    assert "REJECTED_NO_VALID_RETURN_PATH:4" in res_blocked.message
+    print("✓ Test 12: Dönüş rotası kabulü, boş rota temizliği ve Status 4 blokajı başarıyla doğrulandı.")
 
 
 def run_tests():
@@ -478,7 +539,8 @@ def run_tests():
     test_9_failed_tx_tracking()
     test_10_session_id_log_verification_matrix()
     test_11_takeoff_return_point_lock_and_disallowed_preflight_states()
-    print("\n>>> BÜTÜN BİRİM TESTLER EKSİKSİZ GEÇTİ (11/11) <<<")
+    test_12_return_path_invalidation_and_status4_gating()
+    print("\n>>> BÜTÜN BİRİM TESTLER EKSİKSİZ GEÇTİ (12/12) <<<")
 
 
 if __name__ == '__main__':

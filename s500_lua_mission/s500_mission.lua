@@ -1149,16 +1149,27 @@ local function update()
 
         local cur_pos = ahrs:get_relative_position_NED_origin()
         if cur_pos then
+            local rel_alt = BASLANGIC_KONUMU.z - cur_pos:z()
             local dx = cur_pos:x() - ret_kuzey
             local dy = cur_pos:y() - ret_dogu
             local horiz_dist = math.sqrt(dx*dx + dy*dy)
+            local alt_err = math.abs(rel_alt - HEDEF_IRTIFA_M)
 
-            if horiz_dist < DONUS_YATAY_TOLERANS_M then
+            -- Seyir irtifa güvenlik denetimi: Dönüş boyunca [31.0, 35.0] bandında kalınmalı
+            if rel_alt < IRTIFA_ALT_SINIR_M or rel_alt > IRTIFA_UST_SINIR_M then
+                log_warn(string.format("Donus sirasinda irtifa bandi ihlali (%.2fm disinda: [%.1f, %.1f])!",
+                    rel_alt, IRTIFA_ALT_SINIR_M, IRTIFA_UST_SINIR_M))
+            end
+
+            -- Başlangıca tam ulaşmadan ve irtifa bandı sağlanmadan inişe geçilmemesi
+            if horiz_dist < DONUS_YATAY_TOLERANS_M and alt_err < IRTIFA_HATA_TOLERANS_M then
                 if not stability_start_ms then
                     stability_start_ms = now_ms
-                    log_info(string.format("Kalkis noktasina yaklasildi (Mesafe: %.2fm). 2s kararlilik bekleniyor...", horiz_dist))
+                    log_info(string.format("Kalkis noktasina yaklasildi (Mesafe: %.2fm, Irtifa: %.2fm). 2s kararlilik bekleniyor...",
+                        horiz_dist, rel_alt))
                 elseif (now_ms - stability_start_ms) >= KARARLILIK_SURESI_MS then
-                    log_info(string.format("Kalkis noktasinda kararlilik saglandi (Mesafe: %.2fm). INIS durumuna geciliyor.", horiz_dist))
+                    log_info(string.format("Kalkis noktasinda kararlilik saglandi (Mesafe: %.2fm, Irtifa: %.2fm). INIS durumuna geciliyor.",
+                        horiz_dist, rel_alt))
                     change_state(STATE_INIS)
                     return update, UPDATE_RATE_MS
                 end
