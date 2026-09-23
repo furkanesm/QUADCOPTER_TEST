@@ -509,8 +509,8 @@ class SitlScenarioRunner:
                 return False
 
             t_x, t_y, t_z = self.takeoff_freeze_pos
-            exp_kalkis_x = t_x + 40.0 * math.cos(self.takeoff_freeze_yaw)
-            exp_kalkis_y = t_y + 40.0 * math.sin(self.takeoff_freeze_yaw)
+            exp_kalkis_x = t_x + 33.0 * math.cos(self.takeoff_freeze_yaw)
+            exp_kalkis_y = t_y + 33.0 * math.sin(self.takeoff_freeze_yaw)
             cur_x, cur_y, cur_z = self.current_ned_pos
             dx = cur_x - exp_kalkis_x
             dy = cur_y - exp_kalkis_y

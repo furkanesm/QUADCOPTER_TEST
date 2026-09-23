@@ -61,6 +61,8 @@ class PathPlannerNode(Node):
         self.declare_parameter('start_classes', ['start'])
         self.declare_parameter('goal_classes', ['hedef', 'goal'])
         self.declare_parameter('obstacle_classes', ['engel', 'obstacle'])
+        self.declare_parameter('target_cruise_alt', 33.0)
+        self.declare_parameter('vehicle_pos_stale_timeout', 3.0)
 
         self.arena_w = float(self.get_parameter('arena_width').value)
         self.arena_h = float(self.get_parameter('arena_height').value)
@@ -71,6 +73,8 @@ class PathPlannerNode(Node):
         self.offset_y = float(self.get_parameter('origin_offset_y').value)
         self.strict_boundary_walls = bool(self.get_parameter('strict_boundary_walls').value)
         self.auto_route_ready = bool(self.get_parameter('auto_trigger_route_ready').value)
+        self.target_cruise_alt = float(self.get_parameter('target_cruise_alt').value)
+        self.vehicle_pos_stale_timeout = float(self.get_parameter('vehicle_pos_stale_timeout').value)
 
         self.start_classes = [s.strip().lower() for s in self.get_parameter('start_classes').value]
         self.goal_classes = [s.strip().lower() for s in self.get_parameter('goal_classes').value]
@@ -84,7 +88,17 @@ class PathPlannerNode(Node):
         self.goal_pos_ned: Optional[Tuple[float, float]] = None
         self.obstacles_ned: List[Tuple[float, float]] = []
 
+        self.current_session_id: Optional[int] = None
+        self.takeoff_return_pos_ned: Optional[Tuple[float, float]] = None
+        self.takeoff_return_pos_ned_3d: Optional[Tuple[float, float, float]] = None
+        self.vehicle_pos_ned: Optional[Tuple[float, float]] = None
+        self.vehicle_pos_ned_3d: Optional[Tuple[float, float, float]] = None
+        self.last_vehicle_pos_time: Optional[Time] = None
+        self.last_vehicle_pos_mono: Optional[float] = None
+
         self.last_path_ned: List[Tuple[float, float]] = []
+        self.return_path_ned: List[Tuple[float, float]] = []
+        self._preplanned_return_path_ned: Optional[List[Tuple[float, float]]] = None
         self.lua_fsm_state: str = "UNKNOWN"
         self.observation_dispatched: bool = False
         self.route_ready_called: bool = False
@@ -123,10 +137,17 @@ class PathPlannerNode(Node):
             10
         )
 
-        # 4. Planlanan Rota Çıktısı (nav_msgs/Path)
+        # 4. Planlanan Rota Çıktısı (nav_msgs/Path) -> /planner/path (Gidiş)
         self.pub_path = self.create_publisher(
             Path,
             '/planner/path',
+            10
+        )
+
+        # 4b. Planlanan Dönüş Rotası Çıktısı (nav_msgs/Path) -> /planner/return_path (Dönüş)
+        self.pub_return_path = self.create_publisher(
+            Path,
+            '/planner/return_path',
             10
         )
 
@@ -150,6 +171,22 @@ class PathPlannerNode(Node):
             self.plan_route_srv_cb
         )
 
+        # 8. Yerde Kilitlenen Referans Noktası Aboneliği
+        self.sub_takeoff_return = self.create_subscription(
+            PoseStamped,
+            '/mission/takeoff_return_point',
+            self.takeoff_return_cb,
+            10
+        )
+
+        # 9. Güncel Araç Konumu Aboneliği
+        self.sub_vehicle_pose = self.create_subscription(
+            PoseStamped,
+            '/mission/vehicle_pose',
+            self.vehicle_pose_cb,
+            10
+        )
+
         self.get_logger().info(
             f"[PLANNER] PathPlannerNode baslatildi (Arena: {self.arena_w}x{self.arena_h}m, "
             f"Res: {self.res}m, VehW: {self.veh_w}m, Safety: {self.safety_m}m)"
@@ -162,9 +199,176 @@ class PathPlannerNode(Node):
         self.goal_pos_ned = None
         self.obstacles_ned = []
         self.last_path_ned = []
+        self.return_path_ned = []
+        self._preplanned_return_path_ned = None
         self.lua_fsm_state = "UNKNOWN"
         self.observation_dispatched = False
         self.route_ready_called = False
+        self.takeoff_return_pos_ned = None
+        self.takeoff_return_pos_ned_3d = None
+        self.vehicle_pos_ned = None
+        self.vehicle_pos_ned_3d = None
+        self.last_vehicle_pos_time = None
+        self.last_vehicle_pos_mono = None
+
+    def takeoff_return_cb(self, msg: PoseStamped):
+        """Yerde kilitlenen fiziksel kalkış/dönüş referans noktasını kaydeder."""
+        # 1. Aktif oturum kontrolü
+        if self.current_session_id is None or self.current_session_id <= 0:
+            self.get_logger().warn("[PLANNER] Reddedildi: Aktif oturum yokken referans alinamazi.")
+            return
+
+        # 2. Frame ve oturum eki doğrulaması
+        raw_frame = (msg.header.frame_id or "").strip()
+        if ":session_" not in raw_frame:
+            self.get_logger().warn(f"[PLANNER] Reddedildi: Frame oturum eki icermiyor: '{raw_frame}'")
+            return
+
+        parts = raw_frame.split(":session_")
+        if len(parts) != 2:
+            self.get_logger().warn(f"[PLANNER] Reddedildi: Bozuk frame yapisi: '{raw_frame}'")
+            return
+
+        base_frame = parts[0].strip().lower()
+        if base_frame != "ekf_origin_ned":
+            self.get_logger().warn(f"[PLANNER] Reddedildi: Gecersiz temel frame: '{base_frame}', beklenen: ekf_origin_ned")
+            return
+
+        try:
+            msg_session_id = int(parts[1].strip())
+        except Exception:
+            self.get_logger().warn(f"[PLANNER] Reddedildi: Bozuk oturum kimligi: '{parts[1]}'")
+            return
+
+        if msg_session_id != self.current_session_id:
+            self.get_logger().warn(f"[PLANNER] Reddedildi: Oturum uyusmazligi: {msg_session_id} != {self.current_session_id}")
+            return
+
+        # 3. Sonlu koordinat kontrolü
+        px = float(msg.pose.position.x)
+        py = float(msg.pose.position.y)
+        pz = float(msg.pose.position.z)
+        if not (math.isfinite(px) and math.isfinite(py) and math.isfinite(pz)):
+            self.get_logger().warn(f"[PLANNER] Reddedildi: Sonlu olmayan koordinatlar: [{px}, {py}, {pz}]")
+            return
+
+        # 4. Kilitli referansın korunması (aynı koordinat zararsız, farklı koordinat ret)
+        if self.takeoff_return_pos_ned_3d is not None:
+            cur_x, cur_y, cur_z = self.takeoff_return_pos_ned_3d
+            if (math.isclose(px, cur_x, abs_tol=1e-3) and
+                math.isclose(py, cur_y, abs_tol=1e-3) and
+                math.isclose(pz, cur_z, abs_tol=1e-3)):
+                self.get_logger().debug(f"[PLANNER] Ayni referans noktasi tekrar alindi (Session {msg_session_id}), zararsiz gecildi.")
+                return
+            else:
+                self.get_logger().warn(
+                    f"[PLANNER] Reddedildi: Kilitli referans degistirilemez: "
+                    f"Yeni [{px:.2f}, {py:.2f}, {pz:.2f}] != Kilitli [{cur_x:.2f}, {cur_y:.2f}, {cur_z:.2f}]"
+                )
+                return
+
+        # Bütün doğrulamalar tamamlandı: SADECE fiziksel dönüş referansı durumunu güncelle
+        self.takeoff_return_pos_ned = (px, py)
+        self.takeoff_return_pos_ned_3d = (px, py, pz)
+        self.get_logger().info(f"[PLANNER] Takeoff return reference locked: NED 3D [{px:.2f}, {py:.2f}, {pz:.2f}] (Session: {msg_session_id})")
+        self.pub_status.publish(String(data=f"TAKEOFF_REF_LOCKED:{px:.2f}:{py:.2f}:{pz:.2f}"))
+
+        if self.goal_pos_ned is not None:
+            if self.observation_dispatched:
+                # Gözlem hedefinden ön planlama yap (varış beklenir)
+                self.plan_return_path(self.goal_pos_ned, is_preplan=True)
+                if self.lua_fsm_state == "HEDEF_KONUMUNDA_BEKLE" and self._is_vehicle_pos_fresh():
+                    self.check_and_unlock_return_path()
+            else:
+                # Doğrudan dönüş senaryosunda:
+                # Konum eskidikten sonra kalkış referansı gelirse kullanılabilir dönüş rotası YAYIMLANMAMALI!
+                if self._is_vehicle_pos_fresh():
+                    self.plan_return_path(self.vehicle_pos_ned, is_preplan=False)
+                else:
+                    self.get_logger().warn("[PLANNER] Doğrudan dönüş rotası yayımlanamaz: Araç konumu güncel değil (stale)!")
+
+    def _is_vehicle_pos_fresh(self) -> bool:
+        """Kayıtlı araç konumunun sonlu ve zaman aşımına uğramamış (taze) olduğunu doğrular."""
+        if self.vehicle_pos_ned is None or self.last_vehicle_pos_time is None:
+            return False
+        now_ros = self.get_clock().now()
+        age_s = (now_ros - self.last_vehicle_pos_time).nanoseconds / 1e9
+        return 0.0 <= age_s <= self.vehicle_pos_stale_timeout
+
+    def vehicle_pose_cb(self, msg: PoseStamped):
+        """
+        Güncel araç konumunu (/mission/vehicle_pose) kaydeder.
+        Aktif oturum, ekf_origin_ned frame'i, mesajdaki session kimliği ve
+        konum güncelliği doğrulanmadan hiçbir durum güncellenmez.
+        """
+        # 1. Aktif oturum kontrolü
+        if self.current_session_id is None or self.current_session_id <= 0:
+            self.get_logger().warn("[PLANNER] Reddedildi (/mission/vehicle_pose): Aktif oturum yok.")
+            return
+
+        # 2. Frame ve oturum eki doğrulaması
+        raw_frame = (msg.header.frame_id or "").strip()
+        if ":session_" not in raw_frame:
+            self.get_logger().warn(f"[PLANNER] Reddedildi (/mission/vehicle_pose): Frame oturum eki icermiyor: '{raw_frame}'")
+            return
+
+        parts = raw_frame.split(":session_")
+        if len(parts) != 2:
+            self.get_logger().warn(f"[PLANNER] Reddedildi (/mission/vehicle_pose): Bozuk frame yapisi: '{raw_frame}'")
+            return
+
+        base_frame = parts[0].strip().lower()
+        if base_frame != "ekf_origin_ned":
+            self.get_logger().warn(f"[PLANNER] Reddedildi (/mission/vehicle_pose): Gecersiz temel frame: '{base_frame}', beklenen: ekf_origin_ned")
+            return
+
+        try:
+            msg_session_id = int(parts[1].strip())
+        except Exception:
+            self.get_logger().warn(f"[PLANNER] Reddedildi (/mission/vehicle_pose): Bozuk oturum kimligi: '{parts[1]}'")
+            return
+
+        if msg_session_id != self.current_session_id:
+            self.get_logger().warn(f"[PLANNER] Reddedildi (/mission/vehicle_pose): Oturum uyusmazligi: {msg_session_id} != {self.current_session_id}")
+            return
+
+        # 3. Sonlu koordinat kontrolü
+        px = float(msg.pose.position.x)
+        py = float(msg.pose.position.y)
+        pz = float(msg.pose.position.z)
+        if not (math.isfinite(px) and math.isfinite(py) and math.isfinite(pz)):
+            self.get_logger().warn(f"[PLANNER] Reddedildi (/mission/vehicle_pose): Sonlu olmayan koordinatlar: [{px}, {py}, {pz}]")
+            return
+
+        # 4. Konum güncelliği (staleness check)
+        now_ros = self.get_clock().now()
+        if msg.header.stamp.sec == 0 and msg.header.stamp.nanosec == 0:
+            self.get_logger().warn("[PLANNER] Reddedildi (/mission/vehicle_pose): Bos zaman damgasi.")
+            return
+
+        msg_time = Time.from_msg(msg.header.stamp, clock_type=now_ros.clock_type)
+        dt_source = (now_ros - msg_time).nanoseconds / 1e9
+        if dt_source < 0.0 or dt_source > self.vehicle_pos_stale_timeout:
+            self.get_logger().warn(f"[PLANNER] Reddedildi (/mission/vehicle_pose): Gecikmis/eskis veri ({dt_source:.2f}s > {self.vehicle_pos_stale_timeout}s)")
+            return
+
+        # Bütün doğrulamalar tamamlandı: Durum değişkenlerini ve kabul zamanını güncelle
+        self.vehicle_pos_ned = (px, py)
+        self.vehicle_pos_ned_3d = (px, py, pz)
+        self.last_vehicle_pos_time = msg_time
+        self.last_vehicle_pos_mono = time.monotonic()
+
+        # Doğrulanmış konumla dönüş rotası açılma denetimi:
+        # HEDEFE_GIT sırasında tetikleme olmamalı; yalnızca HEDEF_KONUMUNDA_BEKLE durumunda açılmalı!
+        if self.observation_dispatched:
+            if self.lua_fsm_state == "HEDEF_KONUMUNDA_BEKLE":
+                self.check_and_unlock_return_path()
+        else:
+            if self.lua_fsm_state == "HEDEF_BEKLE" and self.takeoff_return_pos_ned is not None:
+                if len(self.return_path_ned) < 2 and self._is_vehicle_pos_fresh():
+                    self.plan_return_path(self.vehicle_pos_ned, is_preplan=False)
+                if self.auto_route_ready and not self.route_ready_called and len(self.return_path_ned) >= 2:
+                    self.trigger_route_ready_call()
 
     # --------------------------------------------------------------------------
     # Koordinat Dönüşüm Yardımcıları (NED <-> Grid)
@@ -202,17 +406,33 @@ class PathPlannerNode(Node):
             parts = data.split(":")
             if len(parts) >= 2:
                 self.lua_fsm_state = parts[1].strip()
+        elif data.startswith("SESSION_ACTIVE:"):
+            try:
+                new_session_id = int(data.split("SESSION_ACTIVE:")[1].strip())
+            except Exception:
+                return
 
-        # Kesin FSM tetikleme kuralı:
-        # Gözlem noktasına gönderilmişse (observation_dispatched), varış şartı (HEDEF_KONUMUNDA_BEKLE) aranır.
-        # Doğrudan dönüş senaryosunda ise HEDEF_BEKLE durumunda tetiklenir.
-        # HEDEFE_GIT durumunda asla tetiklenmez (araç henüz yoldadır).
-        if self.auto_route_ready and not self.route_ready_called and len(self.last_path_ned) > 0:
-            if self.observation_dispatched:
-                if self.lua_fsm_state == "HEDEF_KONUMUNDA_BEKLE":
-                    self.trigger_route_ready_call()
+            if self.current_session_id != new_session_id:
+                self.reset_state()
+                self.current_session_id = new_session_id
+                self.get_logger().info(f"[PLANNER] Yeni oturum aktiflestirildi: {new_session_id}")
             else:
-                if self.lua_fsm_state == "HEDEF_BEKLE":
+                self.get_logger().debug(f"[PLANNER] Ayni oturum tekrar alindi ({new_session_id}), kilitler korunuyor.")
+        elif data.startswith("SESSION_STOPPED") or data.startswith("FATAL_SESSION_LIMIT"):
+            self.reset_state()
+            self.current_session_id = None
+
+        # Kesin FSM tetikleme ve rota açma kuralı:
+        # 1. Gözleme gönderilmiş araçta (observation_dispatched == True):
+        #    HEDEFE_GIT veya başka bir durumda tetiklenmez. Yalnızca HEDEF_KONUMUNDA_BEKLE durumunda çalışır.
+        if self.observation_dispatched:
+            if self.lua_fsm_state == "HEDEF_KONUMUNDA_BEKLE":
+                self.check_and_unlock_return_path()
+        else:
+            # 2. Doğrudan dönüş senaryosunda (observation_dispatched == False):
+            #    HEDEF_BEKLE durumunda geçerli dönüş rotası varsa, araç konumu güncelse ve henüz tetiklenmemişse çağrılır.
+            if self.auto_route_ready and not self.route_ready_called and len(self.return_path_ned) >= 2:
+                if self.lua_fsm_state == "HEDEF_BEKLE" and self._is_vehicle_pos_fresh():
                     self.trigger_route_ready_call()
 
     def detections_callback(self, msg: DetectionArray):
@@ -272,6 +492,214 @@ class PathPlannerNode(Node):
             self.execute_planning()
 
     # --------------------------------------------------------------------------
+    # Segment Doğrulama ve Dönüş Rotası Yönetimi
+    # --------------------------------------------------------------------------
+    def _validate_path_segments(self, metric_path: List[Tuple[float, float]], work_grid: np.ndarray) -> bool:
+        """Tüm segmentleri (ilk ve son noktalar dahil) ızgara engelleri ve sınırlarına karşı kontrol eder."""
+        if len(metric_path) < 2:
+            return False
+
+        h, w = work_grid.shape
+        step_dist = max(0.05, self.res * 0.5)
+
+        for i in range(len(metric_path) - 1):
+            p1 = metric_path[i]
+            p2 = metric_path[i + 1]
+            seg_len = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+            num_steps = max(1, int(math.ceil(seg_len / step_dist)))
+
+            for s in range(num_steps + 1):
+                alpha = s / float(num_steps)
+                sx = p1[0] + alpha * (p2[0] - p1[0])
+                sy = p1[1] + alpha * (p2[1] - p1[1])
+                grid_pt = self.ned_to_grid(sx, sy)
+                if grid_pt is None:
+                    return False
+                gx, gy = grid_pt
+                if not (0 <= gx < w and 0 <= gy < h):
+                    return False
+                if work_grid[gy, gx] == 1:
+                    return False
+        return True
+
+    def invalidate_return_path(self, reason: str):
+        """Dönüş rotasını geçersiz kılar, adaptördeki rotayı temizler ve Status 4'ü engeller."""
+        self.return_path_ned = []
+        self._preplanned_return_path_ned = None
+        self.route_ready_called = False
+
+        # Adaptördeki return_path'i temizlemek için aktif oturum ekiyle boş Path yayınla
+        empty_path = Path()
+        empty_path.header.stamp = self.get_clock().now().to_msg()
+        if self.current_session_id is not None:
+            empty_path.header.frame_id = f"ekf_origin_ned:session_{self.current_session_id}"
+        else:
+            empty_path.header.frame_id = "ekf_origin_ned"
+        empty_path.poses = []
+        self.pub_return_path.publish(empty_path)
+
+        err = f"RETURN_PLANNING_FAILED:{reason}"
+        self.get_logger().warn(f"[PLANNER] {err}")
+        self.pub_status.publish(String(data=err))
+
+    def plan_return_path(self, ret_start: Tuple[float, float], is_preplan: bool = False) -> Tuple[bool, str]:
+        """
+        Dönüş başlangıcından (ret_start) yerde kilitlenen fiziksel kalkış noktasına (takeoff_return_pos_ned)
+        bağımsız A* ile ayrı dönüş rotası hesaplar.
+        Tüm segmentleri (ilk ve son bağlantı dahil) engel ve sınır denetiminden geçirir.
+        Tek noktalı yolları en az 2 waypoint sözleşmesine uyarlar.
+        """
+        if self.takeoff_return_pos_ned is None or self.takeoff_return_pos_ned_3d is None:
+            err = "MISSING_TAKEOFF_RETURN_REF"
+            self.invalidate_return_path(err)
+            return False, err
+
+        if self.current_session_id is None or self.current_session_id <= 0:
+            err = "NO_ACTIVE_SESSION"
+            self.invalidate_return_path(err)
+            return False, err
+
+        grid_w = int(math.floor(self.arena_w / self.res))
+        grid_h = int(math.floor(self.arena_h / self.res))
+        grid = np.zeros((grid_h, grid_w), dtype=np.uint8)
+
+        for ox, oy in self.obstacles_ned:
+            pt = self.ned_to_grid(ox, oy)
+            if pt is not None:
+                grid[pt[1], pt[0]] = GridPlanner.OBSTACLE
+
+        start_grid = self.ned_to_grid(*ret_start)
+        goal_grid = self.ned_to_grid(*self.takeoff_return_pos_ned)
+
+        if start_grid is None:
+            err = "RETURN_START_OUT_OF_BOUNDS"
+            self.invalidate_return_path(err)
+            return False, err
+
+        if goal_grid is None:
+            err = "RETURN_GOAL_OUT_OF_BOUNDS"
+            self.invalidate_return_path(err)
+            return False, err
+
+        resp, path_grid_ret, work_grid_ret = self.planner.plan_path(grid, start_grid, goal_grid)
+        status = resp.get("status", "UNKNOWN")
+
+        if status != "SUCCESS" or not path_grid_ret:
+            err = f"NO_RETURN_PATH:{status}"
+            self.invalidate_return_path(err)
+            return False, err
+
+        # Tek noktalı yolun iki uç atamasıyla bozulmasını önle (en az 2 waypoint sözleşmesi)
+        if len(path_grid_ret) == 1:
+            metric_ret = [ret_start, self.takeoff_return_pos_ned]
+        else:
+            metric_ret = [self.grid_to_ned(gx, gy) for gx, gy in path_grid_ret]
+            metric_ret[0] = ret_start
+            metric_ret[-1] = self.takeoff_return_pos_ned
+
+        # Tüm segmentlerin (ilk ve son bağlantılar dahil) engel ve sınır denetimi
+        if not self._validate_path_segments(metric_ret, work_grid_ret):
+            err = "RETURN_SEGMENT_COLLISION"
+            self.invalidate_return_path(err)
+            return False, err
+
+        if is_preplan:
+            self._preplanned_return_path_ned = metric_ret
+            self.return_path_ned = []
+            msg = f"RETURN_PREPLANNED:waypoints_{len(metric_ret)}"
+            self.get_logger().info(f"[PLANNER] Gözlem hedefinden dönüş rotası önceden hesaplandı ({len(metric_ret)} nokta), varış bekleniyor.")
+            return True, msg
+
+        # Doğrudan kullanıma aç ve yayınla
+        self._publish_return_path(metric_ret)
+        return True, f"RETURN_PLANNING_SUCCESS:waypoints_{len(metric_ret)}"
+
+    def _publish_return_path(self, metric_ret: List[Tuple[float, float]]):
+        """Doğrulanmış dönüş rotasını nav_msgs/Path olarak /planner/return_path konusuna yayınlar."""
+        path_msg = Path()
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+        path_msg.header.frame_id = f"ekf_origin_ned:session_{self.current_session_id}"
+
+        # Seyir z değeri sözleşmesi: ref_z - target_cruise_alt (ref_z - 33.0)
+        ref_z = self.takeoff_return_pos_ned_3d[2]
+        cruise_z = float(ref_z - self.target_cruise_alt)
+
+        for px, py in metric_ret:
+            pose = PoseStamped()
+            pose.header = path_msg.header
+            pose.pose.position.x = float(px)
+            pose.pose.position.y = float(py)
+            pose.pose.position.z = cruise_z
+            path_msg.poses.append(pose)
+
+        self.pub_return_path.publish(path_msg)
+        self.return_path_ned = metric_ret
+        msg_success = f"RETURN_PLANNING_SUCCESS:waypoints_{len(metric_ret)}"
+        self.get_logger().info(
+            f"[PLANNER] Çarpışmasız dönüş rotası kullanıma açıldı ve yayınlandı: "
+            f"{len(metric_ret)} nokta, cruise_z={cruise_z:.2f}m (Session: {self.current_session_id})"
+        )
+        self.pub_status.publish(String(data=msg_success))
+
+    def check_and_unlock_return_path(self):
+        """
+        Gözlem hedefinden dönüş rotasını, araç hedefe ulaştığında ve konumu doğrulandığında kullanıma açar.
+        """
+        # 1. Gözleme gönderilmemişse bu kontrol devrede değildir
+        if not self.observation_dispatched:
+            return
+
+        # 2. KESİN DURUM KONTROLÜ - Yalnızca HEDEF_KONUMUNDA_BEKLE durumunda açılabilir!
+        if self.lua_fsm_state != "HEDEF_KONUMUNDA_BEKLE":
+            return
+
+        # 3. Aktif oturum doğrulaması
+        if self.current_session_id is None or self.current_session_id <= 0:
+            self.get_logger().warn("[PLANNER] Dönüş rotası açılamıyor: Aktif oturum mevcut değil.")
+            return
+
+        # 4. Yerde kilitlenen fiziksel kalkış referansı kontrolü
+        if self.takeoff_return_pos_ned is None or self.takeoff_return_pos_ned_3d is None:
+            self.get_logger().warn("[PLANNER] Dönüş rotası açılamıyor: Kilitli fiziksel kalkış referansı henüz yok.")
+            return
+
+        # 5. Araç konumu ve güncelliği (staleness kontrolü)
+        if not self._is_vehicle_pos_fresh():
+            self.get_logger().warn("[PLANNER] Dönüş rotası açılamıyor: Araç konumu eksik veya güncel değil (stale)!")
+            return
+
+        if self.goal_pos_ned is None:
+            return
+
+        # 6. Araç konumu ile hedef noktası tutarlılığı
+        vx, vy = self.vehicle_pos_ned
+        gx, gy = self.goal_pos_ned
+        dist_to_goal = math.hypot(vx - gx, vy - gy)
+        GOAL_ARRIVAL_TOLERANCE_M = 1.5
+
+        if dist_to_goal > GOAL_ARRIVAL_TOLERANCE_M:
+            self.get_logger().warn(
+                f"[PLANNER] Dönüş rotası açılamıyor: Araç hedefe yeterince yakın değil! "
+                f"Mesafe: {dist_to_goal:.2f}m > {GOAL_ARRIVAL_TOLERANCE_M}m"
+            )
+            return
+
+        # 7. HAZIR ROTA KONTROLÜ: Oturum, referans, güncellik ve hedefe yakınlık geçtikten sonra
+        # Eğer hazır rota varsa yeniden hesaplamadan kullan
+        if len(self.return_path_ned) >= 2:
+            if self.auto_route_ready and not self.route_ready_called:
+                self.trigger_route_ready_call()
+            return
+
+        # Hazır rota yoksa: Doğrulanmış araç konumundan fiziksel kalkış referansına planla
+        ok, msg = self.plan_return_path((vx, vy), is_preplan=False)
+        if ok:
+            if self.auto_route_ready and not self.route_ready_called:
+                self.trigger_route_ready_call()
+        else:
+            self.get_logger().warn(f"[PLANNER] Hedefe varıldı ancak dönüş rotası planlanamadı: {msg}")
+
+    # --------------------------------------------------------------------------
     # Rota Planlama Çekirdeği
     # --------------------------------------------------------------------------
     def execute_planning(self) -> Tuple[bool, str]:
@@ -302,12 +730,14 @@ class PathPlannerNode(Node):
             err = "PLANNING_FAILED:START_OUT_OF_BOUNDS"
             self.get_logger().warn(f"[PLANNER] {err}")
             self.pub_status.publish(String(data=err))
+            self.invalidate_return_path("FORWARD_START_OUT_OF_BOUNDS")
             return False, err
 
         if goal_grid is None:
             err = "PLANNING_FAILED:GOAL_OUT_OF_BOUNDS"
             self.get_logger().warn(f"[PLANNER] {err}")
             self.pub_status.publish(String(data=err))
+            self.invalidate_return_path("FORWARD_GOAL_OUT_OF_BOUNDS")
             return False, err
 
         # A* Arama çalıştır
@@ -318,22 +748,31 @@ class PathPlannerNode(Node):
             err = f"PLANNING_FAILED:{status}"
             self.get_logger().warn(f"[PLANNER] Rota bulunamadi: {err}")
             self.pub_status.publish(String(data=err))
+            self.invalidate_return_path(f"FORWARD_FAILED_{status}")
             return False, err
 
         # Izgara yolunu metrik NED koordinatlarına dönüştür
-        metric_path: List[Tuple[float, float]] = []
-        for gx, gy in path_grid:
-            metric_path.append(self.grid_to_ned(gx, gy))
+        if len(path_grid) == 1:
+            metric_path = [self.start_pos_ned, self.goal_pos_ned]
+        else:
+            metric_path = [self.grid_to_ned(gx, gy) for gx, gy in path_grid]
+            metric_path[0] = self.start_pos_ned
+            metric_path[-1] = self.goal_pos_ned
 
-        # İlk ve son noktayı kesin tespit koordinatlarıyla hizala
-        metric_path[0] = self.start_pos_ned
-        metric_path[-1] = self.goal_pos_ned
+        # Gidiş rotası segment kontrolü
+        if not self._validate_path_segments(metric_path, work_grid):
+            err = "PLANNING_FAILED:SEGMENT_COLLISION"
+            self.get_logger().warn(f"[PLANNER] Gidiş segmenti engelle kesişti: {err}")
+            self.pub_status.publish(String(data=err))
+            self.invalidate_return_path("FORWARD_SEGMENT_COLLISION")
+            return False, err
+
         self.last_path_ned = metric_path
 
         # 1. nav_msgs/Path yayınla
         path_msg = Path()
         path_msg.header.stamp = self.get_clock().now().to_msg()
-        path_msg.header.frame_id = "ekf_origin_ned"
+        path_msg.header.frame_id = f"ekf_origin_ned:session_{self.current_session_id}" if self.current_session_id is not None else "ekf_origin_ned"
         for px, py in metric_path:
             pose = PoseStamped()
             pose.header = path_msg.header
@@ -351,12 +790,19 @@ class PathPlannerNode(Node):
         obs_x, obs_y = self.goal_pos_ned
         self.dispatch_goto_observation(obs_x, obs_y)
 
-        # 3. Eğer doğrudan dönüş senaryosundaysak ve otopilot HEDEF_BEKLE durumundaysa Status 4 servisini çağır
-        if self.auto_route_ready and not self.route_ready_called:
-            if not self.observation_dispatched and self.lua_fsm_state == "HEDEF_BEKLE":
-                self.trigger_route_ready_call()
-            elif self.observation_dispatched and self.lua_fsm_state == "HEDEF_KONUMUNDA_BEKLE":
-                self.trigger_route_ready_call()
+        # 3. Dönüş rotasını planla veya ön planla
+        if self.takeoff_return_pos_ned is not None and self.takeoff_return_pos_ned_3d is not None:
+            if self.observation_dispatched:
+                self.plan_return_path(self.goal_pos_ned, is_preplan=True)
+                if self.lua_fsm_state == "HEDEF_KONUMUNDA_BEKLE" and self._is_vehicle_pos_fresh():
+                    self.check_and_unlock_return_path()
+            elif self.vehicle_pos_ned is not None and self._is_vehicle_pos_fresh():
+                self.plan_return_path(self.vehicle_pos_ned, is_preplan=False)
+                if self.auto_route_ready and not self.route_ready_called and len(self.return_path_ned) >= 2:
+                    if self.lua_fsm_state == "HEDEF_BEKLE" and self._is_vehicle_pos_fresh():
+                        self.trigger_route_ready_call()
+        else:
+            self.get_logger().info("[PLANNER] takeoff_return referansı henüz kilitlenmedi, referans gelince dönüş planlanacak.")
 
         return True, msg_success
 
@@ -376,6 +822,17 @@ class PathPlannerNode(Node):
 
     def trigger_route_ready_call(self):
         """Status 4 için /mission/route_ready Trigger servisini çağırır."""
+        # 1. Hazır rota varken konum eskirse Status 4 gönderilmemeli!
+        if not self._is_vehicle_pos_fresh():
+            self.get_logger().warn("[PLANNER] Status 4 engellendi: Araç konumu güncel değil (stale)!")
+            self.pub_status.publish(String(data="ROUTE_READY_BLOCKED_STALE_POSITION"))
+            return
+
+        # 2. En az 2 waypoint içeren geçerli bir dönüş rotası olmalı
+        if len(self.return_path_ned) < 2:
+            self.get_logger().warn("[PLANNER] Status 4 engellendi: Geçerli dönüş rotası yok!")
+            return
+
         if not self.cli_route_ready.service_is_ready():
             self.get_logger().warn("[PLANNER] /mission/route_ready servisi henüz hazır değil, çağrı bekletiliyor.")
             return

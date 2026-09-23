@@ -9,7 +9,9 @@ import threading
 import math
 import queue
 from pymavlink import mavutil
+from std_msgs.msg import Bool, String
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Path
 from std_srvs.srv import Trigger
 from std_msgs.msg import String
 from mavros_msgs.srv import WaypointPush, WaypointPull
@@ -232,6 +234,24 @@ class MavlinkAdapterNode(Node):
             PoseStamped, '/mavros/local_position/pose', self.local_pos_cb, qos_profile_sensor_data
         )
         self.pub_event_status = self.create_publisher(String, '/adapter/event_status', 10)
+        self.pub_takeoff_return = self.create_publisher(PoseStamped, '/mission/takeoff_return_point', 10)
+        self.pub_vehicle_pose = self.create_publisher(PoseStamped, '/mission/vehicle_pose', 10)
+        self.takeoff_return_point_ned = None  # Tuple[float, float]: (x, y) geriye dönük uyumluluk
+        self.takeoff_return_point_ned_3d = None  # Tuple[float, float, float]: (x, y, z) doğrulanmış 3D referans
+        self.return_path = None
+        self.return_path_session_id = None
+        self.target_cruise_alt = 33.0
+        self.cruise_alt_tolerance = 2.0  # [31.0, 35.0] m seyir irtifa kabul bandı
+        self.return_target_tolerance = 1.0  # 1.0 metre kalkış noktası eşleşme toleransı
+
+        self.declare_parameter('require_return_path', True)
+        self.require_return_path = bool(self.get_parameter('require_return_path').value)
+        self.sub_return_path = self.create_subscription(
+            Path, '/planner/return_path', self.planner_path_callback, 10
+        )
+
+        self.pub_vision_enable = self.create_publisher(Bool, '/vision/enable', 10)
+        self.vision_enabled = False
         
         self.srv_start = self.create_service(Trigger, '/adapter/start_session', self.srv_start_cb)
         self.srv_stop = self.create_service(Trigger, '/adapter/stop_session', self.srv_stop_cb)
@@ -281,7 +301,6 @@ class MavlinkAdapterNode(Node):
         import rclpy
         self.get_logger().info("[ADAPTER TEST] Starting mock mission upload...")
         
-        # Create a helper node for synchronous wait
         helper = Node("_mock_upload_helper")
         try:
             cli_push = helper.create_client(WaypointPush, "/mavros/mission/push")
@@ -292,12 +311,12 @@ class MavlinkAdapterNode(Node):
                 return
                 
             wp1 = Waypoint()
-            wp1.frame = 6 # GLOBAL_RELATIVE_ALT
-            wp1.command = 16 # MAV_CMD_NAV_WAYPOINT
+            wp1.frame = 6
+            wp1.command = 16
             wp1.is_current = True
             wp1.autocontinue = True
             wp1.param1 = 0.0
-            wp1.param2 = 1.0 # 1m accept radius
+            wp1.param2 = 1.0
             wp1.param3 = 0.0
             wp1.param4 = 0.0
             wp1.x_lat = 41.0
@@ -343,12 +362,129 @@ class MavlinkAdapterNode(Node):
                 
             self.get_logger().info(f"[ADAPTER TEST] Pull successful! Recovered {res_pull.wp_received} waypoints.")
             
-            # Send ROUTE_READY
             self.queue_command(4, 0.0, 0.0, 1.0, self.get_clock().now(), allowed_states=self.ALLOWED_STATES_ROUTE_READY)
             self.get_logger().info("[ADAPTER TEST] Sent ROUTE_READY (Status=4).")
             
         finally:
             helper.destroy_node()
+
+    def planner_path_callback(self, msg: Path):
+        # 1. Oturum durumu kontrolü
+        if self.session_state != self.ACTIVE:
+            self.get_logger().warn("[ADAPTER] Ignored /planner/return_path: session not active")
+            return
+
+        raw_frame = (msg.header.frame_id or "").strip()
+        path_session_id = None
+        base_frame = raw_frame.lower()
+        if ":session_" in raw_frame:
+            parts = raw_frame.split(":session_")
+            base_frame = parts[0].strip().lower()
+            try:
+                path_session_id = int(parts[1].strip())
+            except Exception:
+                path_session_id = None
+
+        # 2. Kaynak oturum kimliği doğrulaması
+        if path_session_id is None or path_session_id != self.session_id:
+            err = f"REJECTED_STALE_OR_MISSING_SESSION_PATH:path_session_{path_session_id}_mismatch_{self.session_id}"
+            self.get_logger().warn(f"[ADAPTER] {err}")
+            self.pub_event_status.publish(String(data=err))
+            return
+
+        # 3. Koordinat çerçevesi kontrolü
+        if base_frame not in self.ALLOWED_FRAMES_NED:
+            err = f"REJECTED_INVALID_FRAME_ID:{base_frame}"
+            self.get_logger().warn(f"[ADAPTER] {err}")
+            self.pub_event_status.publish(String(data=err))
+            return
+
+        # 4. En az 2 waypoint olmalı
+        if len(msg.poses) < 2:
+            self.return_path = None
+            self.return_path_session_id = None
+            err = f"REJECTED_INSUFFICIENT_WAYPOINTS:{len(msg.poses)}"
+            self.get_logger().warn(f"[ADAPTER] {err}: cleared return_path")
+            self.pub_event_status.publish(String(data=err))
+            return
+
+        # 5. Aktif görevin doğrulanmış 3D başlangıç referansı
+        if self.takeoff_return_point_ned_3d is None or len(self.takeoff_return_point_ned_3d) < 3:
+            err = "REJECTED_MISSING_LOCKED_3D_TAKEOFF_RETURN_REFERENCE"
+            self.get_logger().warn(f"[ADAPTER] {err}")
+            self.pub_event_status.publish(String(data=err))
+            return
+
+        ref_x, ref_y, ref_z = self.takeoff_return_point_ned_3d
+        if not (math.isfinite(ref_x) and math.isfinite(ref_y) and math.isfinite(ref_z)):
+            err = "REJECTED_NON_FINITE_3D_TAKEOFF_RETURN_REFERENCE"
+            self.get_logger().warn(f"[ADAPTER] {err}")
+            self.pub_event_status.publish(String(data=err))
+            return
+
+        expected_z = ref_z - self.target_cruise_alt
+
+        # 6. Her waypoint için doğrulama
+        for idx, p in enumerate(msg.poses):
+            px = p.pose.position.x
+            py = p.pose.position.y
+            pz = p.pose.position.z
+            if not (math.isfinite(px) and math.isfinite(py) and math.isfinite(pz)):
+                err = f"REJECTED_NON_FINITE_WAYPOINT:{idx}"
+                self.get_logger().warn(f"[ADAPTER] {err}")
+                self.pub_event_status.publish(String(data=err))
+                return
+
+            wp_raw_frame = (p.header.frame_id or "").strip()
+            if wp_raw_frame:
+                if ":session_" in wp_raw_frame:
+                    wp_parts = wp_raw_frame.split(":session_")
+                    if len(wp_parts) != 2:
+                        err = f"REJECTED_CORRUPT_WAYPOINT_SESSION_ID:{idx}:{wp_raw_frame}"
+                        self.get_logger().warn(f"[ADAPTER] {err}")
+                        self.pub_event_status.publish(String(data=err))
+                        return
+                    wp_base = wp_parts[0].strip().lower()
+                    try:
+                        wp_sess = int(wp_parts[1].strip())
+                    except Exception:
+                        err = f"REJECTED_CORRUPT_WAYPOINT_SESSION_ID:{idx}:{wp_raw_frame}"
+                        self.get_logger().warn(f"[ADAPTER] {err}")
+                        self.pub_event_status.publish(String(data=err))
+                        return
+                    if wp_sess != self.session_id:
+                        err = f"REJECTED_MISMATCHED_WAYPOINT_SESSION:{idx}:{wp_sess}_vs_{self.session_id}"
+                        self.get_logger().warn(f"[ADAPTER] {err}")
+                        self.pub_event_status.publish(String(data=err))
+                        return
+                else:
+                    wp_base = wp_raw_frame.lower()
+
+                if wp_base != base_frame:
+                    err = f"REJECTED_INCONSISTENT_WAYPOINT_FRAME:{idx}:{wp_base}_vs_{base_frame}"
+                    self.get_logger().warn(f"[ADAPTER] {err}")
+                    self.pub_event_status.publish(String(data=err))
+                    return
+
+            if abs(pz - expected_z) > self.cruise_alt_tolerance:
+                err = f"REJECTED_INVALID_CRUISE_ALTITUDE:{idx}:alt_{pz:.2f}m_expected_{expected_z:.2f}m"
+                self.get_logger().warn(f"[ADAPTER] {err}")
+                self.pub_event_status.publish(String(data=err))
+                return
+
+        # 7. Son noktanın kilitli başlangıç referansıyla eşleşmesi
+        final_p = msg.poses[-1].pose.position
+        final_dist = math.hypot(final_p.x - ref_x, final_p.y - ref_y)
+        if final_dist > self.return_target_tolerance:
+            err = f"REJECTED_RETURN_TARGET_MISMATCH:{final_dist:.2f}m_gt_{self.return_target_tolerance}m"
+            self.get_logger().warn(f"[ADAPTER] {err}")
+            self.pub_event_status.publish(String(data=err))
+            return
+
+        self.return_path = msg
+        self.return_path_session_id = self.session_id
+        self.get_logger().info(f"[ADAPTER] Return path accepted for session {self.session_id}: {len(msg.poses)} waypoints, expected_z={expected_z:.2f}m, end error {final_dist:.3f}m")
+        self.pub_event_status.publish(String(data=f"RETURN_PATH_ACCEPTED:{len(msg.poses)}:{self.session_id}"))
 
     def get_next_seq(self):
         if self.seq_counter >= 16777215:
@@ -370,6 +506,10 @@ class MavlinkAdapterNode(Node):
         self.session_id = random.randint(1, 16000000)
         self.seq_counter = 0
         self.lua_fsm_state = "UNKNOWN"
+        self.takeoff_return_point_ned = None
+        self.takeoff_return_point_ned_3d = None
+        self.return_path = None
+        self.return_path_session_id = None
         self.pending_commands.clear()
         self.acked_commands.clear()
         self.last_sent_types = {1: None, 2: None, 3: None, 4: None}
@@ -394,12 +534,22 @@ class MavlinkAdapterNode(Node):
     def local_stop(self, reason):
         self.session_state = self.IDLE
         self.lua_fsm_state = "UNKNOWN"
+        self.takeoff_return_point_ned = None
+        self.takeoff_return_point_ned_3d = None
+        self.return_path = None
+        self.return_path_session_id = None
         self.handshake_pending = None
         self.last_sent_types.clear()
         for seq, cmd in self.pending_commands.items():
             self.pub_event_status.publish(String(data=f"CANCELLED:{seq}:{cmd['msg_type']}"))
         self.pending_commands.clear()
         self.acked_commands.clear()
+        if self.vision_enabled:
+            self.vision_enabled = False
+            self.pub_vision_enable.publish(Bool(data=False))
+            self.pub_event_status.publish(String(data="VISION_DISABLED"))
+            self.get_logger().info("[ADAPTER] Session stopped: Vision disabled.")
+        self.pub_event_status.publish(String(data=f"SESSION_STOPPED:{reason}"))
         self.get_logger().warn(f"[ADAPTER] Local session stopped: {reason}")
         
     def srv_stop_cb(self, request, response):
@@ -491,6 +641,43 @@ class MavlinkAdapterNode(Node):
             response.success = False
             response.message = err
             return response
+
+        # Dönüş rotası zorunluluğu ve doğrulama kontrolü
+        if self.require_return_path:
+            if self.return_path is None or len(self.return_path.poses) < 2:
+                err = "REJECTED_NO_VALID_RETURN_PATH:4"
+                self.get_logger().warn(f"[ADAPTER] {err}")
+                self.pub_event_status.publish(String(data=err))
+                response.success = False
+                response.message = err
+                return response
+
+            if self.return_path_session_id != self.session_id:
+                err = f"REJECTED_RETURN_PATH_SESSION_MISMATCH:4:{self.return_path_session_id}_vs_{self.session_id}"
+                self.get_logger().warn(f"[ADAPTER] {err}")
+                self.pub_event_status.publish(String(data=err))
+                response.success = False
+                response.message = err
+                return response
+
+            if self.takeoff_return_point_ned_3d is None:
+                err = "REJECTED_MISSING_TAKEOFF_RETURN_REFERENCE:4"
+                self.get_logger().warn(f"[ADAPTER] {err}")
+                self.pub_event_status.publish(String(data=err))
+                response.success = False
+                response.message = err
+                return response
+
+            final_p = self.return_path.poses[-1].pose.position
+            ref_x, ref_y = self.takeoff_return_point_ned_3d[0], self.takeoff_return_point_ned_3d[1]
+            final_dist = math.hypot(final_p.x - ref_x, final_p.y - ref_y)
+            if final_dist > self.return_target_tolerance:
+                err = f"REJECTED_RETURN_TARGET_MISMATCH:4:{final_dist:.2f}m_gt_{self.return_target_tolerance}m"
+                self.get_logger().warn(f"[ADAPTER] {err}")
+                self.pub_event_status.publish(String(data=err))
+                response.success = False
+                response.message = err
+                return response
 
         # Zaten geçiş bekleyen veya kuyrukta olan ROUTE_READY kontrolü
         for seq, cmd in self.acked_commands.items():
@@ -662,6 +849,7 @@ class MavlinkAdapterNode(Node):
                 self.session_state = self.ACTIVE
                 self.get_logger().info(f"[ADAPTER] SESSION_START ACCEPTED: SEQ={acked_seq}")
                 self.pub_event_status.publish(String(data=f"HANDSHAKE_ACCEPTED:{acked_seq}"))
+                self.pub_event_status.publish(String(data=f"SESSION_ACTIVE:{self.session_id}"))
             else:
                 self.session_state = self.IDLE
                 self.get_logger().warn(f"[ADAPTER] SESSION_START REJECTED: SEQ={acked_seq}")
@@ -754,6 +942,111 @@ class MavlinkAdapterNode(Node):
                 self.lua_fsm_state = target_state
                 self.get_logger().info(f"[ADAPTER] Observed Lua FSM State: {target_state}")
                 self.pub_event_status.publish(String(data=f"OBSERVED_STATE:{target_state}"))
+                
+                # Vision Gating Kontrolü (HEDEF_BEKLE açar, DONUS/INIS/TAMAMLANDI kapatır)
+                if target_state == "HEDEF_BEKLE":
+                    if not self.vision_enabled:
+                        self.vision_enabled = True
+                        self.pub_vision_enable.publish(Bool(data=True))
+                        self.pub_event_status.publish(String(data="VISION_ENABLED"))
+                        self.get_logger().info("[ADAPTER] Lua FSM entered HEDEF_BEKLE: Vision enabled (warm standby -> active).")
+                elif target_state in ("DONUS", "INIS", "TAMAMLANDI"):
+                    if self.vision_enabled:
+                        self.vision_enabled = False
+                        self.pub_vision_enable.publish(Bool(data=False))
+                        self.pub_event_status.publish(String(data="VISION_DISABLED"))
+                        self.get_logger().info(f"[ADAPTER] Lua FSM entered {target_state}: Vision disabled (power save & landing safety).")
+
+        # takeoff_return_point_ned Kaydı (Aşama 2 Telemetri Referans Noktası)
+        if "takeoff_return_point_ned kilitlendi" in text:
+            try:
+                # 1. session_state ACTIVE ve session_id geçerli olmalı
+                if self.session_state != self.ACTIVE or self.session_id is None or self.session_id <= 0:
+                    err = "REJECTED_TAKEOFF_RETURN_SESSION_NOT_ACTIVE"
+                    self.get_logger().warn(f"[ADAPTER] {err}")
+                    self.pub_event_status.publish(String(data=err))
+                    return
+
+                # 2. Kaynak mesajda geçerli Session ID mevcut ve aktif kimlikle eşleşmeli
+                if "Session ID: " not in text:
+                    err = "REJECTED_TAKEOFF_RETURN_LACKS_SESSION_ID"
+                    self.get_logger().warn(f"[ADAPTER] {err}")
+                    self.pub_event_status.publish(String(data=err))
+                    return
+
+                try:
+                    log_sess = int(text.split("Session ID: ")[1].split(")")[0].strip())
+                except Exception:
+                    err = "REJECTED_TAKEOFF_RETURN_CORRUPT_SESSION_ID"
+                    self.get_logger().warn(f"[ADAPTER] {err}")
+                    self.pub_event_status.publish(String(data=err))
+                    return
+
+                if log_sess != self.session_id:
+                    err = f"TAKEOFF_RETURN_SESSION_MISMATCH:{log_sess}_vs_{self.session_id}"
+                    self.get_logger().warn(f"[ADAPTER] {err}")
+                    self.pub_event_status.publish(String(data=err))
+                    return
+
+                # 3. Tam üç koordinat mevcut ve hepsi sonlu olmalı
+                after_kw = text.split("takeoff_return_point_ned kilitlendi")[1]
+                if "[" not in after_kw or "]" not in after_kw:
+                    err = "REJECTED_TAKEOFF_RETURN_MISSING_COORDINATE_BRACKETS"
+                    self.get_logger().warn(f"[ADAPTER] {err}")
+                    self.pub_event_status.publish(String(data=err))
+                    return
+
+                try:
+                    coords_str = after_kw.split("[")[1].split("]")[0]
+                    coords = [float(c.strip()) for c in coords_str.split(",")]
+                except Exception:
+                    err = "REJECTED_TAKEOFF_RETURN_INVALID_COORDINATE_FORMAT"
+                    self.get_logger().warn(f"[ADAPTER] {err}")
+                    self.pub_event_status.publish(String(data=err))
+                    return
+
+                if len(coords) != 3:
+                    err = f"REJECTED_TAKEOFF_RETURN_NOT_3D:{len(coords)}"
+                    self.get_logger().warn(f"[ADAPTER] {err}")
+                    self.pub_event_status.publish(String(data=err))
+                    return
+
+                if not (math.isfinite(coords[0]) and math.isfinite(coords[1]) and math.isfinite(coords[2])):
+                    err = "REJECTED_NON_FINITE_TAKEOFF_RETURN_LOG"
+                    self.get_logger().warn(f"[ADAPTER] {err}")
+                    self.pub_event_status.publish(String(data=err))
+                    return
+
+                # 4. Aynı oturumda kilitli referans farklı x/y/z ile değiştirilemez
+                if self.takeoff_return_point_ned_3d is not None:
+                    cur_x, cur_y, cur_z = self.takeoff_return_point_ned_3d
+                    if (math.isclose(coords[0], cur_x, abs_tol=1e-3) and
+                        math.isclose(coords[1], cur_y, abs_tol=1e-3) and
+                        math.isclose(coords[2], cur_z, abs_tol=1e-3)):
+                        # Aynı referansın tekrarı: zararsız no-op
+                        self.get_logger().debug(f"[ADAPTER] Duplicate takeoff return reference received for session {log_sess}, ignoring harmlessly.")
+                        return
+                    else:
+                        err = f"REJECTED_TAKEOFF_RETURN_MUTATION:[{coords[0]:.2f},{coords[1]:.2f},{coords[2]:.2f}]_vs_locked_[{cur_x:.2f},{cur_y:.2f},{cur_z:.2f}]"
+                        self.get_logger().warn(f"[ADAPTER] {err}")
+                        self.pub_event_status.publish(String(data=err))
+                        return
+
+                # Geçerli ilk mesaj: 2D ve 3D alanlarını birlikte doldur
+                self.takeoff_return_point_ned = (coords[0], coords[1])
+                self.takeoff_return_point_ned_3d = (coords[0], coords[1], coords[2])
+                self.get_logger().info(f"[ADAPTER] Locked Takeoff Return Point NED 3D: {self.takeoff_return_point_ned_3d} (Session ID: {log_sess})")
+                self.pub_event_status.publish(String(data=f"TAKEOFF_RETURN_LOCKED:{coords[0]:.2f}:{coords[1]:.2f}:{coords[2]:.2f}"))
+
+                msg_pose = PoseStamped()
+                msg_pose.header.stamp = self.get_clock().now().to_msg()
+                msg_pose.header.frame_id = f"ekf_origin_ned:session_{log_sess}"
+                msg_pose.pose.position.x = float(coords[0])
+                msg_pose.pose.position.y = float(coords[1])
+                msg_pose.pose.position.z = float(coords[2])
+                self.pub_takeoff_return.publish(msg_pose)
+            except Exception as e:
+                self.get_logger().error(f"[ADAPTER] Failed to parse takeoff_return_point_ned log: {e}")
 
         # GOTO_OBSERVATION (Status 3) Korelasyonu
         if "GOTO_OBSERVATION alindi (" in text:
@@ -1005,11 +1298,22 @@ class MavlinkAdapterNode(Node):
     def mavlink_rx_thread(self):
         while self._running:
             try:
-                msg = self.master.recv_match(type=['COMMAND_LONG', 'HEARTBEAT', 'STATUSTEXT'], blocking=True, timeout=0.5)
+                msg = self.master.recv_match(type=['COMMAND_LONG', 'HEARTBEAT', 'STATUSTEXT', 'LOCAL_POSITION_NED'], blocking=True, timeout=0.5)
                 if not msg:
                     continue
                 
                 if msg.get_type() == 'HEARTBEAT':
+                    continue
+
+                if msg.get_type() == 'LOCAL_POSITION_NED':
+                    if msg.get_srcSystem() == self.sys_id:
+                        pose_msg = PoseStamped()
+                        pose_msg.header.stamp = self.get_clock().now().to_msg()
+                        pose_msg.header.frame_id = f"ekf_origin_ned:session_{self.session_id}" if self.session_id is not None else "ekf_origin_ned"
+                        pose_msg.pose.position.x = float(msg.x)
+                        pose_msg.pose.position.y = float(msg.y)
+                        pose_msg.pose.position.z = float(msg.z)
+                        self.pub_vehicle_pose.publish(pose_msg)
                     continue
 
                 # 1. STATUSTEXT kaynak filtresi: Yalnızca beklenen otopilot kuyruğa alınır

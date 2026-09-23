@@ -265,6 +265,15 @@ def test_node_scenario_4_start_lock_and_fsm_trigger_rules():
     assert node.start_pos_ned == (2.0, 1.0), "Kilitli start konumu kamera titreşimiyle DEĞİŞMEMELİDİR!"
 
     # 3. Hedef ekle ve rota üret
+    node.current_session_id = 1001
+    ref_msg = PoseStamped()
+    ref_msg.header.stamp = node.get_clock().now().to_msg()
+    ref_msg.header.frame_id = "ekf_origin_ned:session_1001"
+    ref_msg.pose.position.x = 2.0
+    ref_msg.pose.position.y = 1.0
+    ref_msg.pose.position.z = -1.0
+    node.takeoff_return_cb(ref_msg)
+
     det3 = DetectionArray()
     det3.detections = [make_detection("hedef", 8.0, 8.0)]
     node.detections_callback(det3)
@@ -282,6 +291,15 @@ def test_node_scenario_4_start_lock_and_fsm_trigger_rules():
     node.cli_route_ready.call_async.assert_not_called()  # Henüz varmadı!
 
     # Otopilot hedefe vardı: HEDEF_KONUMUNDA_BEKLE
+    # Güncel ve hedefe yakın araç konumu gönder
+    pose_msg = PoseStamped()
+    pose_msg.header.stamp = node.get_clock().now().to_msg()
+    pose_msg.header.frame_id = "ekf_origin_ned:session_1001"
+    pose_msg.pose.position.x = 8.0
+    pose_msg.pose.position.y = 8.0
+    pose_msg.pose.position.z = -34.0
+    node.vehicle_pose_cb(pose_msg)
+
     status_msg_arrived = String(data="OBSERVED_STATE:HEDEF_KONUMUNDA_BEKLE")
     node.adapter_event_callback(status_msg_arrived)
     # Şimdi çağrılmış olmalı!
@@ -311,6 +329,138 @@ def test_gridplanner_boundary_wall_behavior_comparison():
     print("✓ Test 9: GridPlanner sınır dolgusu davranışı (açık hava serbestliği vs katı duvar) başarıyla doğrulandı.")
 
 
+def test_ready_route_stale_or_far_position_blocks_status4():
+    """10. Hazır rota varken eski veya hedeften uzak konumda Status 4'ün engellenmesi."""
+    node, events, obs_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 2002
+    node.takeoff_return_pos_ned = (0.0, 0.0)
+    node.takeoff_return_pos_ned_3d = (0.0, 0.0, 0.0)
+    node.goal_pos_ned = (10.0, 10.0)
+    node.observation_dispatched = True
+    node.lua_fsm_state = "HEDEF_KONUMUNDA_BEKLE"
+    node.cli_route_ready.service_is_ready = MagicMock(return_value=True)
+    node.cli_route_ready.call_async = MagicMock()
+
+    # Hazır dönüş rotası
+    node.return_path_ned = [(10.0, 10.0), (0.0, 0.0)]
+
+    # Durum 1: Araç konumu hedeften uzak (15.0, 10.0)
+    pose_far = PoseStamped()
+    pose_far.header.stamp = node.get_clock().now().to_msg()
+    pose_far.header.frame_id = "ekf_origin_ned:session_2002"
+    pose_far.pose.position.x = 15.0
+    pose_far.pose.position.y = 10.0
+    pose_far.pose.position.z = -33.0
+    node.vehicle_pose_cb(pose_far)
+    node.check_and_unlock_return_path()
+    node.cli_route_ready.call_async.assert_not_called()
+
+    # Durum 2: Araç konumu hedefe yakın ama zaman damgası eski (10s önce)
+    old_time = Time(seconds=node.get_clock().now().seconds_nanoseconds()[0] - 10)
+    pose_stale = PoseStamped()
+    pose_stale.header.stamp = old_time.to_msg()
+    pose_stale.header.frame_id = "ekf_origin_ned:session_2002"
+    pose_stale.pose.position.x = 10.0
+    pose_stale.pose.position.y = 10.0
+    pose_stale.pose.position.z = -33.0
+    node.vehicle_pose_cb(pose_stale)
+    node.cli_route_ready.call_async.assert_not_called()
+    print("✓ Test 10: Hazır rota varken hedeften uzak veya eski konumda Status 4 blokajı doğrulandı.")
+
+
+def test_valid_arrival_single_trigger_and_no_trigger_in_hedefe_git():
+    """11. Geçerli varışta tek tetikleme; HEDEFE_GIT sırasında tetikleme olmaması."""
+    node, events, obs_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 3003
+    node.takeoff_return_pos_ned = (0.0, 0.0)
+    node.takeoff_return_pos_ned_3d = (0.0, 0.0, 0.0)
+    node.goal_pos_ned = (5.0, 5.0)
+    node.observation_dispatched = True
+    node.cli_route_ready.service_is_ready = MagicMock(return_value=True)
+    node.cli_route_ready.call_async = MagicMock()
+
+    # HEDEFE_GIT durumundayken konum gelse bile tetikleme OLMAMALI
+    node.lua_fsm_state = "HEDEFE_GIT"
+    pose = PoseStamped()
+    pose.header.stamp = node.get_clock().now().to_msg()
+    pose.header.frame_id = "ekf_origin_ned:session_3003"
+    pose.pose.position.x = 5.0
+    pose.pose.position.y = 5.0
+    pose.pose.position.z = -33.0
+    node.vehicle_pose_cb(pose)
+    node.cli_route_ready.call_async.assert_not_called()
+
+    # HEDEF_KONUMUNDA_BEKLE durumuna geçildiğinde tetiklenmeli
+    node.adapter_event_callback(String(data="OBSERVED_STATE:HEDEF_KONUMUNDA_BEKLE"))
+    node.cli_route_ready.call_async.assert_called_once()
+
+    # Tekrarlanan callback'ler ikinci bir çağrı üretmemeli!
+    node.adapter_event_callback(String(data="OBSERVED_STATE:HEDEF_KONUMUNDA_BEKLE"))
+    node.vehicle_pose_cb(pose)
+    node.cli_route_ready.call_async.assert_called_once()
+    print("✓ Test 11: Geçerli varışta tek tetikleme ve HEDEFE_GIT koruması başarıyla doğrulandı.")
+
+
+def test_return_path_planning_and_altitude_and_obstacles():
+    """12. Dönüş rotasının bağımsız A*, fiziksel kalkış referansı, ref_z - 33 irtifası ve engel kontrolü."""
+    node, events, obs_msgs, path_msgs = create_test_planner_node()
+    return_path_msgs = []
+    node.pub_return_path.publish = lambda msg: return_path_msgs.append(msg)
+    node.reset_state()
+    node.current_session_id = 4004
+
+    # Kalkış referansı: z = -5.0m -> cruise_z = -5.0 - 33.0 = -38.0m olmalı!
+    node.takeoff_return_pos_ned = (0.0, 0.0)
+    node.takeoff_return_pos_ned_3d = (0.0, 0.0, -5.0)
+
+    # Dönüş rotası üzerinde (3, 3) noktasına engel koy
+    node.obstacles_ned = [(3.0, 3.0)]
+
+    # (6, 6) noktasından (0, 0) kalkış referansına dönüş planla
+    ok, msg = node.plan_return_path((6.0, 6.0), is_preplan=False)
+    assert ok is True
+    assert len(return_path_msgs) > 0
+    ret_path = return_path_msgs[-1]
+
+    # Başlangıç (6, 6) ve Bitiş (0, 0) kontrolü
+    assert math.isclose(ret_path.poses[0].pose.position.x, 6.0, abs_tol=1e-2)
+    assert math.isclose(ret_path.poses[0].pose.position.y, 6.0, abs_tol=1e-2)
+    assert math.isclose(ret_path.poses[-1].pose.position.x, 0.0, abs_tol=1e-2)
+    assert math.isclose(ret_path.poses[-1].pose.position.y, 0.0, abs_tol=1e-2)
+
+    # İrtifa sözleşmesi: her waypoint'in z'si ref_z - 33 = -38.0 olmalı!
+    for p in ret_path.poses:
+        assert math.isclose(p.pose.position.z, -38.0, abs_tol=1e-2)
+
+    # Engelden kaçınma kontrolü: hiçbir nokta engele (3, 3) 0.5m'den yakın olmamalı
+    for p in ret_path.poses:
+        dist_obs = math.hypot(p.pose.position.x - 3.0, p.pose.position.y - 3.0)
+        assert dist_obs >= 0.5
+    print("✓ Test 12: Dönüş rotası A*, kalkış referansı, ref_z - 33 irtifası ve engel kaçınma başarıyla doğrulandı.")
+
+
+def test_planning_failure_invalidates_adapter_route():
+    """13. Planlama başarısızlığında boş rotanın yayınlanması ve adaptördeki rotanın temizlenmesi."""
+    node, events, obs_msgs, path_msgs = create_test_planner_node()
+    return_path_msgs = []
+    node.pub_return_path.publish = lambda msg: return_path_msgs.append(msg)
+    node.reset_state()
+    node.current_session_id = 5005
+
+    # Önceden kabul edilmiş rota simülasyonu
+    node.return_path_ned = [(5.0, 5.0), (0.0, 0.0)]
+
+    # İptal et
+    node.invalidate_return_path("TEST_FAILURE")
+    assert len(node.return_path_ned) == 0
+    assert len(return_path_msgs) > 0
+    assert len(return_path_msgs[-1].poses) == 0  # Boş rota yayınlandı
+    assert f"session_5005" in return_path_msgs[-1].header.frame_id
+    print("✓ Test 13: Planlama başarısızlığında boş rota yayını ve iptal mekanizması başarıyla doğrulandı.")
+
+
 def run_all_tests():
     print("\n" + "="*75)
     print("S500 ROTA PLANLAYICI & GRIDPLANNER BİRİM TESTLERİ")
@@ -324,8 +474,12 @@ def run_all_tests():
     test_node_scenario_2_blocked_goal_no_path()
     test_node_scenario_3_invalid_and_stale_data_filtering()
     test_node_scenario_4_start_lock_and_fsm_trigger_rules()
+    test_ready_route_stale_or_far_position_blocks_status4()
+    test_valid_arrival_single_trigger_and_no_trigger_in_hedefe_git()
+    test_return_path_planning_and_altitude_and_obstacles()
+    test_planning_failure_invalidates_adapter_route()
     print("="*75)
-    print(">>> BÜTÜN PLANLAYICI BİRİM TESTLERİ EKSİKSİZ GEÇTİ (9/9) <<<\n")
+    print(">>> BÜTÜN PLANLAYICI BİRİM TESTLERİ EKSİKSİZ GEÇTİ (13/13) <<<\n")
 
 
 if __name__ == '__main__':
