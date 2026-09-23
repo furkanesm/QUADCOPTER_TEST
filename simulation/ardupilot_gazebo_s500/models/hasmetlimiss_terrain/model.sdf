@@ -1,4 +1,4 @@
-<?xml version="1.0"?>
+<?xml version='1.0' encoding='utf-8'?>
 <sdf version="1.7">
   <model name="hasmetlimiss_terrain">
     <static>true</static>
@@ -11,10 +11,6 @@
             <scale>1 1 1</scale>
           </mesh>
         </geometry>
-        <material>
-          <ambient>0.6 0.6 0.6 1</ambient>
-          <diffuse>0.7 0.7 0.7 1</diffuse>
-        </material>
       </visual>
       <collision name="terrain_collision">
         <geometry>

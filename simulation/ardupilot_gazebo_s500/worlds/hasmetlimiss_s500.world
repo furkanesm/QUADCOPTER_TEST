@@ -37,10 +37,6 @@
               <scale>1 1 1</scale>
             </mesh>
           </geometry>
-          <material>
-            <ambient>0.6 0.6 0.6 1</ambient>
-            <diffuse>0.7 0.7 0.7 1</diffuse>
-          </material>
         </visual>
         <collision name="terrain_collision">
           <geometry>
@@ -54,7 +50,7 @@
     </model>
     <include>
       <uri>model://s500_custom_with_ardupilot</uri>
-      <pose>15.000000000 0.000000000 0.223955000 0.000000000 0.000000000 0.000000000</pose>
+      <pose>-33 0 0.243955000 0 0 0</pose>
     </include>
     <model name="yesil_zemin_80x80">
       <static>true</static>
@@ -120,6 +116,19 @@
           </material>
           <cast_shadows>false</cast_shadows>
         </visual>
+      </link>
+    </model>
+    <model name="s500_kalkis_destegi">
+      <static>true</static>
+      <pose>-33 0 -0.044045000 0 0 0</pose>
+      <link name="destek">
+        <collision name="temas">
+          <geometry>
+            <box>
+              <size>4 4 0.10</size>
+            </box>
+          </geometry>
+        </collision>
       </link>
     </model>
   </world>
