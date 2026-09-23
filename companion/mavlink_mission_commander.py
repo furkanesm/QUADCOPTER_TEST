@@ -9,7 +9,7 @@ import threading
 import math
 import queue
 from pymavlink import mavutil
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import Trigger
 
@@ -217,6 +217,10 @@ class MavlinkAdapterNode(Node):
             PoseStamped, '/mission/goto_observation', self.goto_observation_callback, 10
         )
         self.pub_event_status = self.create_publisher(String, '/adapter/event_status', 10)
+        self.pub_takeoff_return = self.create_publisher(PoseStamped, '/mission/takeoff_return_point', 10)
+        self.takeoff_return_point_ned = None
+        self.pub_vision_enable = self.create_publisher(Bool, '/vision/enable', 10)
+        self.vision_enabled = False
         
         self.srv_start = self.create_service(Trigger, '/adapter/start_session', self.srv_start_cb)
         self.srv_stop = self.create_service(Trigger, '/adapter/stop_session', self.srv_stop_cb)
@@ -248,6 +252,7 @@ class MavlinkAdapterNode(Node):
         self.session_id = random.randint(1, 16000000)
         self.seq_counter = 0
         self.lua_fsm_state = "UNKNOWN"
+        self.takeoff_return_point_ned = None
         self.pending_commands.clear()
         self.acked_commands.clear()
         self.last_sent_types = {1: None, 2: None, 3: None, 4: None}
@@ -272,12 +277,19 @@ class MavlinkAdapterNode(Node):
     def local_stop(self, reason):
         self.session_state = self.IDLE
         self.lua_fsm_state = "UNKNOWN"
+        self.takeoff_return_point_ned = None
         self.handshake_pending = None
         self.last_sent_types.clear()
         for seq, cmd in self.pending_commands.items():
             self.pub_event_status.publish(String(data=f"CANCELLED:{seq}:{cmd['msg_type']}"))
         self.pending_commands.clear()
         self.acked_commands.clear()
+        if self.vision_enabled:
+            self.vision_enabled = False
+            self.pub_vision_enable.publish(Bool(data=False))
+            self.pub_event_status.publish(String(data="VISION_DISABLED"))
+            self.get_logger().info("[ADAPTER] Session stopped: Vision disabled.")
+        self.pub_event_status.publish(String(data=f"SESSION_STOPPED:{reason}"))
         self.get_logger().warn(f"[ADAPTER] Local session stopped: {reason}")
         
     def srv_stop_cb(self, request, response):
@@ -540,6 +552,7 @@ class MavlinkAdapterNode(Node):
                 self.session_state = self.ACTIVE
                 self.get_logger().info(f"[ADAPTER] SESSION_START ACCEPTED: SEQ={acked_seq}")
                 self.pub_event_status.publish(String(data=f"HANDSHAKE_ACCEPTED:{acked_seq}"))
+                self.pub_event_status.publish(String(data=f"SESSION_ACTIVE:{self.session_id}"))
             else:
                 self.session_state = self.IDLE
                 self.get_logger().warn(f"[ADAPTER] SESSION_START REJECTED: SEQ={acked_seq}")
@@ -632,6 +645,40 @@ class MavlinkAdapterNode(Node):
                 self.lua_fsm_state = target_state
                 self.get_logger().info(f"[ADAPTER] Observed Lua FSM State: {target_state}")
                 self.pub_event_status.publish(String(data=f"OBSERVED_STATE:{target_state}"))
+                
+                # Vision Gating Kontrolü (HEDEF_BEKLE açar, DONUS/INIS/TAMAMLANDI kapatır)
+                if target_state == "HEDEF_BEKLE":
+                    if not self.vision_enabled:
+                        self.vision_enabled = True
+                        self.pub_vision_enable.publish(Bool(data=True))
+                        self.pub_event_status.publish(String(data="VISION_ENABLED"))
+                        self.get_logger().info("[ADAPTER] Lua FSM entered HEDEF_BEKLE: Vision enabled (warm standby -> active).")
+                elif target_state in ("DONUS", "INIS", "TAMAMLANDI"):
+                    if self.vision_enabled:
+                        self.vision_enabled = False
+                        self.pub_vision_enable.publish(Bool(data=False))
+                        self.pub_event_status.publish(String(data="VISION_DISABLED"))
+                        self.get_logger().info(f"[ADAPTER] Lua FSM entered {target_state}: Vision disabled (power save & landing safety).")
+
+        # takeoff_return_point_ned Kaydı (Aşama 2 Telemetri Referans Noktası)
+        if "takeoff_return_point_ned kilitlendi:" in text:
+            try:
+                coords_str = text.split("takeoff_return_point_ned kilitlendi: [")[1].split("]")[0]
+                coords = [float(c.strip()) for c in coords_str.split(",")]
+                if len(coords) >= 2:
+                    self.takeoff_return_point_ned = (coords[0], coords[1])
+                    self.get_logger().info(f"[ADAPTER] Locked Takeoff Return Point NED: {self.takeoff_return_point_ned}")
+                    self.pub_event_status.publish(String(data=f"TAKEOFF_RETURN_LOCKED:{coords[0]:.2f}:{coords[1]:.2f}"))
+                    
+                    msg_pose = PoseStamped()
+                    msg_pose.header.stamp = self.get_clock().now().to_msg()
+                    msg_pose.header.frame_id = "ekf_origin_ned"
+                    msg_pose.pose.position.x = float(coords[0])
+                    msg_pose.pose.position.y = float(coords[1])
+                    msg_pose.pose.position.z = float(coords[2]) if len(coords) >= 3 else 0.0
+                    self.pub_takeoff_return.publish(msg_pose)
+            except Exception as e:
+                self.get_logger().error(f"[ADAPTER] Failed to parse takeoff_return_point_ned log: {e}")
 
         # GOTO_OBSERVATION (Status 3) Korelasyonu
         if "GOTO_OBSERVATION alindi (" in text:

@@ -421,6 +421,50 @@ def test_10_session_id_log_verification_matrix():
     print("✓ Test 10: Oturum doğrulama matrisi ((a) eşleşme onayı, (b) uyumsuzluk reddi, (c) eksik ID fallback) başarıyla doğrulandı.")
 
 
+def test_11_takeoff_return_point_lock_and_disallowed_preflight_states():
+    """11. Aşama 2: takeoff_return_point_ned kilitlenme logu ayrıştırması ve DIKEY_TIRMANIS/ILERI_HAREKET retleri."""
+    node, events = create_test_node()
+    node.session_state = node.ACTIVE
+    
+    # 1. DIKEY_TIRMANIS durumu gözlendiğinde Status 3 ve Status 4 reddedilmeli
+    log_dikey = MockMavMsg("[S500 LUA] Durum Gecisi: HAZIRLIK -> DIKEY_TIRMANIS")
+    node._handle_statustext_msg(log_dikey)
+    assert node.lua_fsm_state == "DIKEY_TIRMANIS"
+    assert any("OBSERVED_STATE:DIKEY_TIRMANIS" in e for e in events)
+
+    # Status 3 isteği reddedilmeli
+    det_msg = PoseStamped()
+    det_msg.header.stamp = node.get_clock().now().to_msg()
+    det_msg.pose.position.x = 25.0
+    det_msg.pose.position.y = 15.0
+    node.goto_observation_callback(det_msg)
+    assert any("REJECTED_FSM_STATE_NOT_ALLOWED:3:state_is_DIKEY_TIRMANIS" in e for e in events)
+
+    # Status 4 servis isteği reddedilmeli
+    req = Trigger.Request()
+    resp = Trigger.Response()
+    res = node.route_ready_srv_cb(req, resp)
+    assert res.success is False
+    assert "REJECTED_FSM_STATE_NOT_ALLOWED:4:state_is_DIKEY_TIRMANIS" in res.message
+
+    # 2. ILERI_HAREKET durumu gözlendiğinde de reddedilmeli
+    log_ileri = MockMavMsg("[S500 LUA] Durum Gecisi: DIKEY_TIRMANIS -> ILERI_HAREKET")
+    node._handle_statustext_msg(log_ileri)
+    assert node.lua_fsm_state == "ILERI_HAREKET"
+    assert any("OBSERVED_STATE:ILERI_HAREKET" in e for e in events)
+
+    res2 = node.route_ready_srv_cb(req, resp)
+    assert res2.success is False
+    assert "REJECTED_FSM_STATE_NOT_ALLOWED:4:state_is_ILERI_HAREKET" in res2.message
+
+    # 3. takeoff_return_point_ned kilitlendiğinde ayrıştırılmalı ve yayınlanmalı
+    log_lock = MockMavMsg("[S500 LUA] Ileri hareket tamamlandi ve kararlilik saglandi (Mesafe: 0.12m, Irtifa: 33.05m). takeoff_return_point_ned kilitlendi: [43.00, 20.00, -33.00]. HEDEF_BEKLE durumuna geciliyor.")
+    node._handle_statustext_msg(log_lock)
+    assert node.takeoff_return_point_ned == (43.0, 20.0)
+    assert any("TAKEOFF_RETURN_LOCKED:43.00:20.00" in e for e in events)
+    print("✓ Test 11: Aşama 2 - takeoff_return_point_ned kilitlenmesi ve ön uçuş fazı retleri başarıyla doğrulandı.")
+
+
 def run_tests():
     print("=== MavlinkAdapterNode & Statustext Hardened Unit Tests Başlatılıyor ===")
     test_1_assembler_missing_middle_chunk()
@@ -433,7 +477,8 @@ def run_tests():
     test_8_cross_session_ambiguity_rejection()
     test_9_failed_tx_tracking()
     test_10_session_id_log_verification_matrix()
-    print("\n>>> BÜTÜN BİRİM TESTLER EKSİKSİZ GEÇTİ (10/10) <<<")
+    test_11_takeoff_return_point_lock_and_disallowed_preflight_states()
+    print("\n>>> BÜTÜN BİRİM TESTLER EKSİKSİZ GEÇTİ (11/11) <<<")
 
 
 if __name__ == '__main__':
