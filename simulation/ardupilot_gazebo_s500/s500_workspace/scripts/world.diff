@@ -1,0 +1,19 @@
+--- /home/furkan/s500_sim/ardupilot_gazebo/worlds/iris_arducopter_runway.world	2026-09-18 16:33:05.692058877 +0300
++++ /home/furkan/s500_sim/ardupilot_gazebo/worlds/s500_custom_runway.world	2026-09-18 17:46:56.488838462 +0300
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" ?>
+ <sdf version="1.7">
+-  <world name="iris_arducopter_runway">
++  <world name="s500_custom_runway">
+     <plugin filename="libignition-gazebo-physics-system.so"
+       name="ignition::gazebo::systems::Physics">
+     </plugin>
+@@ -39,7 +39,7 @@
+     </include>
+ 
+     <include>
+-      <uri>model://iris_with_standoffs</uri>
++      <uri>model://s500_custom_with_ardupilot</uri>
+     </include>
+ 
+   </world>

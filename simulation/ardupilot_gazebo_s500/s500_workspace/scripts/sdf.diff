@@ -1,0 +1,11 @@
+--- /home/furkan/s500_sim/ardupilot_gazebo/models/iris_with_standoffs/model.sdf	2026-09-18 16:33:05.635056207 +0300
++++ /home/furkan/s500_sim/ardupilot_gazebo/models/s500_custom_with_ardupilot/model.sdf	2026-09-18 17:46:16.691025211 +0300
+@@ -1,6 +1,6 @@
+ <?xml version='1.0'?>
+-<sdf version='1.5'>
+-  <model name='iris'>
++<sdf version='1.7'>
++  <model name='s500_custom_with_ardupilot'>
+     <pose>0 0 0.194923 0 0 0</pose>
+     <link name='base_link'>
+       <velocity_decay>

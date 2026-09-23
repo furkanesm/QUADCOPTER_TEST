@@ -1,0 +1,191 @@
+{
+  "timestamp": "2026-09-21 19:20:37",
+  "duration_s": 11.73,
+  "overall_passed": false,
+  "critical_failure_occurred": false,
+  "lua_sha256": "923ae3ea3edd09540cb7afd7730c0b9359e32253cee0f5f4b693ddc484f7b3f3",
+  "failure_reasons": [],
+  "scenarios": {
+    "1_handshake": {
+      "status": "PASS",
+      "result": 0,
+      "desc": "Gecerli APP_ACK"
+    },
+    "2_liveliness": {
+      "status": "UNVERIFIED",
+      "reason": "Al\u0131c\u0131 sondas\u0131 teyit edildi, fakat i\u00e7 zaman damgas\u0131 g\u00fcncellemesi telemetriden do\u011frudan g\u00f6zlenemedi"
+    },
+    "3_invalid_rejection": {
+      "status": "PASS",
+      "subtests": {
+        "3a_unauthorized_source": {
+          "status": "PASS",
+          "evidence_log": "[S500 LUA] Yetkisiz kaynak adresi (sys=2, comp=100)! Mesaj reddedildi."
+        },
+        "3b_invalid_target": {
+          "status": "PASS",
+          "evidence_log": "[S500 LUA] Gecersiz hedef adresi (sys=1, comp=5)! Mesaj reddedildi."
+        },
+        "3c_unsupported_version": {
+          "status": "PASS",
+          "evidence_log": "[S500 LUA] Desteklenmeyen protokol surumu: 2.0! Mesaj reddedildi."
+        },
+        "3d_decimal_version": {
+          "status": "PASS",
+          "evidence_log": "[S500 LUA] Desteklenmeyen protokol surumu: 1.2! Mesaj reddedildi."
+        },
+        "3e_decimal_seq": {
+          "status": "PASS",
+          "evidence_log": "[S500 LUA] Gecersiz seq (2.2) alindi! Mesaj reddedildi."
+        },
+        "3f_decimal_status": {
+          "status": "PASS",
+          "evidence_log": "[S500 LUA] Bilinmeyen veya gecersiz status (3.2) alindi! Reddedildi."
+        },
+        "3g_decimal_session": {
+          "status": "PASS",
+          "evidence_log": "[S500 LUA] Gecersiz session_id (12345.2)! Mesaj reddedildi."
+        }
+      }
+    },
+    "4_dedup_and_conflict": {
+      "status": "PASS",
+      "evidence": "4a(ACK=0), 4b(Tekrar ACK=0), 4c(\u00c7ak\u0131\u015fma ACK=1)"
+    },
+    "5_session_management": {
+      "status": "PASS",
+      "evidence": "Yeni oturum ACK=0, eski oturum ACK=1"
+    },
+    "6_disarmed_safety": {
+      "status": "PASS",
+      "evidence": "Heartbeat s\u00fcrekli taze, is_armed=False, armed_violation=False"
+    }
+  },
+  "raw_log_count": 31,
+  "raw_logs": [
+    {
+      "timestamp_mono": 39733.694693419,
+      "text": "Barometer 1 calibration complete"
+    },
+    {
+      "timestamp_mono": 39733.694844612,
+      "text": "Barometer 2 calibration complete"
+    },
+    {
+      "timestamp_mono": 39734.229618018,
+      "text": "ArduPilot Ready"
+    },
+    {
+      "timestamp_mono": 39734.229706581,
+      "text": "AHRS: DCM active"
+    },
+    {
+      "timestamp_mono": 39734.233736889,
+      "text": "[S500 LUA] MAVLink arayuzu baslatildi (COMMAND_LONG dinleniyor, MAV_CMD_USER_1 bloke edildi)."
+    },
+    {
+      "timestamp_mono": 39734.233864013,
+      "text": "[S500 LUA] S500 Otonom Gorev Scripti yuklendi. BEKLEME durumunda tetikleme bekleniyor..."
+    },
+    {
+      "timestamp_mono": 39734.525539986,
+      "text": "RC7: SaveWaypoint LOW"
+    },
+    {
+      "timestamp_mono": 39735.274480265,
+      "text": "[S500 LUA] Yeni Jetson oturumu basariyla acildi (Session ID: 12345, Seq: 1)."
+    },
+    {
+      "timestamp_mono": 39735.781932125,
+      "text": "[S500 LUA] Ayni oturum (ID: 12345) icin tekrar SESSION_START alindi, ACK gonderildi."
+    },
+    {
+      "timestamp_mono": 39735.882784215,
+      "text": "[S500 LUA] Yetkisiz kaynak adresi (sys=2, comp=100)! Mesaj reddedildi."
+    },
+    {
+      "timestamp_mono": 39736.226883193,
+      "text": "EKF3 IMU0 initialised"
+    },
+    {
+      "timestamp_mono": 39736.22706738,
+      "text": "EKF3 IMU1 initialised"
+    },
+    {
+      "timestamp_mono": 39736.232437818,
+      "text": "AHRS: EKF3 active"
+    },
+    {
+      "timestamp_mono": 39736.713913801,
+      "text": "[S500 LUA] Gecersiz hedef adresi (sys=1, comp=5)! Mesaj reddedildi."
+    },
+    {
+      "timestamp_mono": 39737.569758381,
+      "text": "EKF3 IMU1 tilt alignment complete"
+    },
+    {
+      "timestamp_mono": 39737.575562977,
+      "text": "EKF3 IMU0 tilt alignment complete"
+    },
+    {
+      "timestamp_mono": 39737.645583369,
+      "text": "[S500 LUA] Desteklenmeyen protokol surumu: 2.0! Mesaj reddedildi."
+    },
+    {
+      "timestamp_mono": 39737.668606277,
+      "text": "EKF3 IMU1 MAG0 initial yaw alignment complete"
+    },
+    {
+      "timestamp_mono": 39737.674397944,
+      "text": "EKF3 IMU0 MAG0 initial yaw alignment complete"
+    },
+    {
+      "timestamp_mono": 39738.57864696,
+      "text": "[S500 LUA] Desteklenmeyen protokol surumu: 1.2! Mesaj reddedildi."
+    },
+    {
+      "timestamp_mono": 39739.408461242,
+      "text": "[S500 LUA] Gecersiz seq (2.2) alindi! Mesaj reddedildi."
+    },
+    {
+      "timestamp_mono": 39740.342145403,
+      "text": "[S500 LUA] Bilinmeyen veya gecersiz status (3.2) alindi! Reddedildi."
+    },
+    {
+      "timestamp_mono": 39741.269478327,
+      "text": "[S500 LUA] Gecersiz session_id (12345.2)! Mesaj reddedildi."
+    },
+    {
+      "timestamp_mono": 39741.584451046,
+      "text": "GPS 1: probing for u-blox at 230400 baud"
+    },
+    {
+      "timestamp_mono": 39741.601791238,
+      "text": "GPS 1: detected u-blox"
+    },
+    {
+      "timestamp_mono": 39742.197791794,
+      "text": "[S500 LUA] Jetson Bildirimi: START_FOUND (Seq: 2, Hedef: [10.0, 5.0], Conf: 0.90) - Kaydedildi."
+    },
+    {
+      "timestamp_mono": 39742.302894751,
+      "text": "[S500 LUA] Tekrar mesaj basariyla teyit edildi (Seq: 2, Status: 1). Yeniden islenmedi."
+    },
+    {
+      "timestamp_mono": 39742.407870648,
+      "text": "[S500 LUA] Ayni seq (2) icin farkli icerik alindi! Reddedildi."
+    },
+    {
+      "timestamp_mono": 39742.50695795,
+      "text": "[S500 LUA] Eski oturum (ID: 12345) kapatildi/emekliye ayrildi."
+    },
+    {
+      "timestamp_mono": 39742.512559229,
+      "text": "[S500 LUA] Yeni Jetson oturumu basariyla acildi (Session ID: 99999, Seq: 1)."
+    },
+    {
+      "timestamp_mono": 39742.605863594,
+      "text": "[S500 LUA] Aktif oturum disinda mesaj (Mesaj Sess: 12345, Aktif: 99999.0)! Reddedildi."
+    }
+  ]
+}

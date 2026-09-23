@@ -8,11 +8,14 @@ class GridPlanner:
     OBSTACLE = 1
     UNKNOWN = 2
     
-    def __init__(self, cell_size=1.0, vehicle_width=0.0, safety_margin=0.0, unknown_penalty=10.0):
+    def __init__(self, cell_size=1.0, vehicle_width=0.0, safety_margin=0.0,
+                 unknown_penalty=10.0, strict_boundary_walls=False):
         self.res = cell_size
         self.veh_w = vehicle_width
         self.safety_m = safety_margin
         self.unk_penalty = unknown_penalty
+        self.strict_boundary_walls = strict_boundary_walls
+
         
         if self.res <= 0:
             raise ValueError("cell_size is mandatory and must be > 0.")
@@ -96,12 +99,15 @@ class GridPlanner:
         work_grid = np.zeros((h, w), dtype=np.uint8)
         work_grid[grid == self.OBSTACLE] = 1
         
+
         if applied_inflation > 0:
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (applied_inflation * 2 + 1, applied_inflation * 2 + 1))
-            # Pad with 1s to treat outside area as solid wall
-            padded = cv2.copyMakeBorder(work_grid, applied_inflation, applied_inflation, 
-                                        applied_inflation, applied_inflation, 
-                                        cv2.BORDER_CONSTANT, value=1)
+            # strict_boundary_walls True ise dış alan katı duvar (1), aksi halde açık hava (0) doldurulur
+            pad_val = 1 if self.strict_boundary_walls else 0
+            padded = cv2.copyMakeBorder(work_grid, applied_inflation, applied_inflation,
+                                         applied_inflation, applied_inflation,
+                                         cv2.BORDER_CONSTANT, value=pad_val)
+
             padded = cv2.dilate(padded, kernel, iterations=1)
             # Crop back to original dimensions
             work_grid = padded[applied_inflation : h + applied_inflation, 

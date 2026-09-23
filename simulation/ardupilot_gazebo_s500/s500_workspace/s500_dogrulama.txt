@@ -1,0 +1,1898 @@
+=== S500 DOĞRULAMA DOSYASI (GÜNCELLENMİŞ) ===
+
+1. Orijinal iris_arducopter_runway.world ve yeni s500_custom_runway.world dosyalarının tamamı
+--- Orijinal Dosya: /home/furkan/s500_sim/ardupilot_gazebo/worlds/iris_arducopter_runway.world ---
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="iris_arducopter_runway">
+    <plugin filename="libignition-gazebo-physics-system.so"
+      name="ignition::gazebo::systems::Physics">
+    </plugin>
+    <plugin filename="libignition-gazebo-user-commands-system.so"
+      name="ignition::gazebo::systems::UserCommands">
+    </plugin>
+    <plugin filename="libignition-gazebo-scene-broadcaster-system.so"
+      name="ignition::gazebo::systems::SceneBroadcaster">
+    </plugin>
+    <plugin filename="libignition-gazebo-imu-system.so"
+      name="ignition::gazebo::systems::Imu">
+    </plugin>
+
+    <scene>
+      <ambient>1.0 1.0 1.0</ambient>
+      <background>0.8 0.8 0.8</background>
+      <sky></sky>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.8 0.8 0.8 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <include>
+      <uri>model://runway</uri>
+    </include>
+
+    <include>
+      <uri>model://iris_with_standoffs</uri>
+    </include>
+
+  </world>
+</sdf>
+
+--- Yeni Dosya: /home/furkan/s500_sim/ardupilot_gazebo/worlds/s500_custom_runway.world ---
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="s500_custom_runway">
+    <plugin filename="libignition-gazebo-physics-system.so"
+      name="ignition::gazebo::systems::Physics">
+    </plugin>
+    <plugin filename="libignition-gazebo-user-commands-system.so"
+      name="ignition::gazebo::systems::UserCommands">
+    </plugin>
+    <plugin filename="libignition-gazebo-scene-broadcaster-system.so"
+      name="ignition::gazebo::systems::SceneBroadcaster">
+    </plugin>
+    <plugin filename="libignition-gazebo-imu-system.so"
+      name="ignition::gazebo::systems::Imu">
+    </plugin>
+
+    <scene>
+      <ambient>1.0 1.0 1.0</ambient>
+      <background>0.8 0.8 0.8</background>
+      <sky></sky>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.8 0.8 0.8 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <include>
+      <uri>model://runway</uri>
+    </include>
+
+    <include>
+      <uri>model://s500_custom_with_ardupilot</uri>
+    </include>
+
+  </world>
+</sdf>
+
+2. Yeni modelin model.config ve model.sdf dosyalarının tamamı
+--- Yeni Config: /home/furkan/s500_sim/ardupilot_gazebo/models/s500_custom_with_ardupilot/model.config ---
+<?xml version="1.0"?>
+
+<model>
+  <name>s500_custom_with_ardupilot</name>
+  <version>1.0</version>
+  <sdf version="1.5">model.sdf</sdf>
+
+  <author>
+    <name>Fadri Furrer</name>
+    <email>fadri.furrer@mavt.ethz.ch</email>
+  </author>
+  <author>
+    <name>Michael Burri</name>
+  </author>
+  <author>
+    <name>Mina Kamel</name>
+  </author>
+  <author>
+    <name>Janosch Nikolic</name>
+  </author>
+  <author>
+    <name>Markus Achtelik</name>
+  </author>
+
+  <maintainer email="hsu@osrfoundation.org">john hsu</maintainer>
+
+
+  <description>
+    DRAFT: s500_custom_with_ardupilot.
+    This model currently uses Iris physical properties (mass, inertia, motor positions, and propeller physics).
+    It is NOT physically representative of an S500 yet.
+    Original text: A copy of the 3DR Iris model taken from
+    https://github.com/PX4/sitl_gazebo/tree/master/models
+    Local modifications include adding standoffs,
+    inertia and collision updates..
+  </description>
+</model>
+
+--- Yeni SDF: /home/furkan/s500_sim/ardupilot_gazebo/models/s500_custom_with_ardupilot/model.sdf ---
+<?xml version='1.0'?>
+<sdf version='1.5'>
+  <model name='s500_custom_with_ardupilot'>
+    <pose>0 0 0.194923 0 0 0</pose>
+    <link name='base_link'>
+      <velocity_decay>
+        <linear>0.0</linear>
+        <angular>0.0</angular>
+      </velocity_decay>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>1.5</mass>
+        <inertia>
+          <ixx>0.008</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.015</iyy>
+          <iyz>0</iyz>
+          <izz>0.017</izz>
+        </inertia>
+      </inertial>
+      <collision name='base_link_collision'>
+        <pose>0 0 -0.08 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.47 0.47 0.23</size>
+          </box>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <max_vel>100.0</max_vel>
+              <min_depth>0.001</min_depth>
+            </ode>
+          </contact>
+          <friction>
+            <ode>
+              <mu>100000.0</mu>
+              <mu2>100000.0</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='base_link_visual'>
+        <geometry>
+          <mesh>
+            <uri>model://iris_with_standoffs/meshes/iris.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/DarkGrey</name>
+          </script-->
+          <ambient>.175 .175 .175  1.0</ambient>
+          <diffuse>.175 .175 .175  1.0</diffuse>
+          <specular>.175 .175 .175 1.000000</specular>
+        </material>
+      </visual>
+
+      <visual name='front_left_leg_visual'>
+        <pose>0.123 0.22 -0.11 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.005</radius>
+            <length>0.17</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/FlatBlack</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script-->
+          <ambient>0.1 0.1 0.1</ambient>
+          <diffuse>0.1 0.1 0.1</diffuse>
+          <specular>0.01 0.01 0.01 1.0</specular>
+        </material>
+      </visual>
+      <visual name='front_right_leg_visual'>
+        <pose>0.123 -0.22 -0.11 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.005</radius>
+            <length>0.17</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/FlatBlack</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script-->
+          <ambient>0.1 0.1 0.1</ambient>
+          <diffuse>0.1 0.1 0.1</diffuse>
+          <specular>0.01 0.01 0.01 1.0</specular>
+        </material>
+      </visual>
+      <visual name='rear_left_leg_visual'>
+        <pose>-0.140 0.21 -0.11 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.005</radius>
+            <length>0.17</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/FlatBlack</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script-->
+          <ambient>0.1 0.1 0.1</ambient>
+          <diffuse>0.1 0.1 0.1</diffuse>
+          <specular>0.01 0.01 0.01 1.0</specular>
+        </material>
+      </visual>
+      <visual name='rear_right_leg_visual'>
+        <pose>-0.140 -0.21 -0.11 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.005</radius>
+            <length>0.17</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/FlatBlack</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script-->
+          <ambient>0.1 0.1 0.1</ambient>
+          <diffuse>0.1 0.1 0.1</diffuse>
+          <specular>0.01 0.01 0.01 1.0</specular>
+        </material>
+      </visual>
+    </link>
+    <link name='iris/ground_truth/odometry_sensorgt_link'>
+      <pose>0 0 0 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.15</mass>
+        <inertia>
+          <ixx>0.0001</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.0002</iyy>
+          <iyz>0</iyz>
+          <izz>0.0002</izz>
+        </inertia>
+      </inertial>
+    </link>
+    <joint name='iris/ground_truth/odometry_sensorgt_joint' type='revolute'>
+      <child>iris/ground_truth/odometry_sensorgt_link</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>0</lower>
+          <upper>0</upper>
+          <effort>0</effort>
+          <velocity>0</velocity>
+        </limit>
+        <dynamics>
+          <damping>1.0</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <link name='imu_link'>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.15</mass>
+        <inertia>
+          <ixx>0.00001</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.00002</iyy>
+          <iyz>0</iyz>
+          <izz>0.00002</izz>
+        </inertia>
+      </inertial>
+      <sensor name="imu_sensor" type="imu">
+        <pose>0 0 0 3.141593 0 0</pose>
+        <always_on>1</always_on>
+        <update_rate>1000.0</update_rate>
+      </sensor>
+    </link>
+    <joint name='iris/imu_joint' type='revolute'>
+      <child>imu_link</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>0</lower>
+          <upper>0</upper>
+          <effort>0</effort>
+          <velocity>0</velocity>
+        </limit>
+        <dynamics>
+          <damping>1.0</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+<!--
+    <link name='iris/imugt_link'>
+      <pose>0 0 0 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>1e-02</mass>
+        <inertia>
+          <ixx>0.0002</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.0002</iyy>
+          <iyz>0</iyz>
+          <izz>0.0002</izz>
+        </inertia>
+      </inertial>
+    </link>
+    <joint name='iris/imugt_joint' type='revolute'>
+      <child>iris/imugt_link</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>0</lower>
+          <upper>0</upper>
+          <effort>0</effort>
+          <velocity>0</velocity>
+        </limit>
+        <dynamics>
+          <spring_reference>0</spring_reference>
+          <spring_stiffness>0</spring_stiffness>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+    </joint>
+-->
+    <link name='rotor_0'>
+      <pose>0.13 -0.22 0.023 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>9.75e-06</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000166704</iyy>
+          <iyz>0</iyz>
+          <izz>0.000167604</izz>
+        </inertia>
+      </inertial>
+      <collision name='rotor_0_collision'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <cylinder>
+            <length>0.005</length>
+            <radius>0.1</radius>
+          </cylinder>
+        </geometry>
+        <surface>
+          <contact>
+            <ode/>
+          </contact>
+          <friction>
+            <ode/>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='rotor_0_visual'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/Blue</name>
+            <uri>__default__</uri>
+          </script-->
+          <ambient>0 0 1</ambient>
+          <diffuse>0 0 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+      <gravity>1</gravity>
+      <velocity_decay/>
+      <self_collide>0</self_collide>
+    </link>
+    <joint name='rotor_0_joint' type='revolute'>
+      <child>rotor_0</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+        <dynamics>
+          <damping>0.004</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <link name='rotor_1'>
+      <pose>-0.13 0.2 0.023 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>9.75e-06</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000166704</iyy>
+          <iyz>0</iyz>
+          <izz>0.000167604</izz>
+        </inertia>
+      </inertial>
+      <collision name='rotor_1_collision'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <cylinder>
+            <length>0.005</length>
+            <radius>0.1</radius>
+          </cylinder>
+        </geometry>
+        <surface>
+          <contact>
+            <ode/>
+          </contact>
+          <friction>
+            <ode/>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='rotor_1_visual'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/White</name>
+            <uri>__default__</uri>
+          </script-->
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>.1 .1 .1 1</specular>
+        </material>
+      </visual>
+      <gravity>1</gravity>
+      <velocity_decay/>
+      <self_collide>0</self_collide>
+    </link>
+    <joint name='rotor_1_joint' type='revolute'>
+      <child>rotor_1</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+        <dynamics>
+          <damping>0.004</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <link name='rotor_2'>
+      <pose>0.13 0.22 0.023 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>9.75e-06</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000166704</iyy>
+          <iyz>0</iyz>
+          <izz>0.000167604</izz>
+        </inertia>
+      </inertial>
+      <collision name='rotor_2_collision'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <cylinder>
+            <length>0.005</length>
+            <radius>0.1</radius>
+          </cylinder>
+        </geometry>
+        <surface>
+          <contact>
+            <ode/>
+          </contact>
+          <friction>
+            <ode/>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='rotor_2_visual'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/Blue</name>
+            <uri>__default__</uri>
+          </script-->
+          <ambient>0 0 1</ambient>
+          <diffuse>0 0 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+      <gravity>1</gravity>
+      <velocity_decay/>
+      <self_collide>0</self_collide>
+    </link>
+    <joint name='rotor_2_joint' type='revolute'>
+      <child>rotor_2</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+        <dynamics>
+          <damping>0.004</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <link name='rotor_3'>
+      <pose>-0.13 -0.2 0.023 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>9.75e-06</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000166704</iyy>
+          <iyz>0</iyz>
+          <izz>0.000167604</izz>
+        </inertia>
+      </inertial>
+      <collision name='rotor_3_collision'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <cylinder>
+            <length>0.005</length>
+            <radius>0.1</radius>
+          </cylinder>
+        </geometry>
+        <surface>
+          <contact>
+            <ode/>
+          </contact>
+          <friction>
+            <ode/>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='rotor_3_visual'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/White</name>
+            <uri>__default__</uri>
+          </script-->
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>.1 .1 .1 1</specular>
+        </material>
+      </visual>
+      <gravity>1</gravity>
+      <velocity_decay/>
+      <self_collide>0</self_collide>
+    </link>
+    <joint name='rotor_3_joint' type='revolute'>
+      <child>rotor_3</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+        <dynamics>
+          <damping>0.004</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <static>0</static>
+
+    <!-- plugins -->
+    <plugin filename="libignition-gazebo-joint-state-publisher-system.so"
+      name="ignition::gazebo::systems::JointStatePublisher">
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp>
+      <forward>0 1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_0</link_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp>
+      <forward>0 -1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_0</link_name>
+    </plugin>
+
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp>
+      <forward>0 1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_1</link_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp>
+      <forward>0 -1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_1</link_name>
+    </plugin>
+
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp>
+      <forward>0 -1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_2</link_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp>
+      <forward>0 1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_2</link_name>
+    </plugin>
+
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp>
+      <forward>0 -1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_3</link_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp>
+      <forward>0 1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_3</link_name>
+    </plugin>
+
+    <plugin filename="libignition-gazebo-apply-joint-force-system.so"
+      name="ignition::gazebo::systems::ApplyJointForce">
+      <joint_name>rotor_0_joint</joint_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-apply-joint-force-system.so"
+      name="ignition::gazebo::systems::ApplyJointForce">
+      <joint_name>rotor_1_joint</joint_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-apply-joint-force-system.so"
+      name="ignition::gazebo::systems::ApplyJointForce">
+      <joint_name>rotor_2_joint</joint_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-apply-joint-force-system.so"
+      name="ignition::gazebo::systems::ApplyJointForce">
+      <joint_name>rotor_3_joint</joint_name>
+    </plugin>
+
+    <plugin name="ArduPilotPlugin" filename="libArduPilotPlugin.so">
+      <!-- Port settings -->
+      <fdm_addr>127.0.0.1</fdm_addr>
+      <fdm_port_in>9002</fdm_port_in>
+      <connectionTimeoutMaxCount>5</connectionTimeoutMaxCount>
+      <lock_step>1</lock_step>
+
+      <!-- Frame conventions
+        Require by ArduPilot: change model and gazebo from XYZ to XY-Z coordinates
+      -->
+      <modelXYZToAirplaneXForwardZDown>0 0 0 3.141593 0 0</modelXYZToAirplaneXForwardZDown>
+      <gazeboXYZToNED>0 0 0 3.141593 0 0</gazeboXYZToNED>
+
+      <!-- Sensors -->
+      <imuName>imu_sensor</imuName>
+
+      <!--
+          incoming control command [0, 1]
+          so offset it by 0 to get [0, 1]
+          and divide max target by 1.
+          offset = 0
+          multiplier = 838 max rpm / 1 = 838
+        -->
+      <control channel="0">
+        <jointName>rotor_0_joint</jointName>
+        <useForce>1</useForce>
+        <multiplier>838</multiplier>
+        <offset>0</offset>
+        <servo_min>1100</servo_min>
+        <servo_max>1900</servo_max>
+        <type>VELOCITY</type>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2.5</cmd_max>
+        <cmd_min>-2.5</cmd_min>
+        <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
+      </control>
+      
+      <control channel="1">
+        <jointName>rotor_1_joint</jointName>
+        <useForce>1</useForce>
+        <multiplier>838</multiplier>
+        <offset>0</offset>
+        <servo_min>1100</servo_min>
+        <servo_max>1900</servo_max>
+        <type>VELOCITY</type>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2.5</cmd_max>
+        <cmd_min>-2.5</cmd_min>
+        <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
+      </control>
+
+      <control channel="2">
+        <jointName>rotor_2_joint</jointName>
+        <useForce>1</useForce>
+        <multiplier>-838</multiplier>
+        <offset>0</offset>
+        <servo_min>1100</servo_min>
+        <servo_max>1900</servo_max>
+        <type>VELOCITY</type>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2.5</cmd_max>
+        <cmd_min>-2.5</cmd_min>
+        <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
+      </control>
+
+      <control channel="3">
+        <jointName>rotor_3_joint</jointName>
+        <useForce>1</useForce>
+        <multiplier>-838</multiplier>
+        <offset>0</offset>
+        <servo_min>1100</servo_min>
+        <servo_max>1900</servo_max>
+        <type>VELOCITY</type>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2.5</cmd_max>
+        <cmd_min>-2.5</cmd_min>
+        <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
+      </control>
+    </plugin>
+
+  </model>
+</sdf>
+
+3. Kopyalamaya kaynak olan orijinal model dosyalarının tamamı ve yeni dosyalarla farkları
+--- Orijinal Config: /home/furkan/s500_sim/ardupilot_gazebo/models/iris_with_standoffs/model.config ---
+<?xml version="1.0"?>
+
+<model>
+  <name>Iris with Standoffs</name>
+  <version>1.0</version>
+  <sdf version="1.6">model.sdf</sdf>
+
+  <author>
+    <name>Fadri Furrer</name>
+    <email>fadri.furrer@mavt.ethz.ch</email>
+  </author>
+  <author>
+    <name>Michael Burri</name>
+  </author>
+  <author>
+    <name>Mina Kamel</name>
+  </author>
+  <author>
+    <name>Janosch Nikolic</name>
+  </author>
+  <author>
+    <name>Markus Achtelik</name>
+  </author>
+
+  <maintainer email="hsu@osrfoundation.org">john hsu</maintainer>
+
+
+  <description>
+    A copy of the 3DR Iris model taken from
+    https://github.com/PX4/sitl_gazebo/tree/master/models
+    Local modifications include adding standoffs,
+    inertia and collision updates..
+  </description>
+</model>
+
+--- Orijinal SDF: /home/furkan/s500_sim/ardupilot_gazebo/models/iris_with_standoffs/model.sdf ---
+<?xml version='1.0'?>
+<sdf version='1.5'>
+  <model name='iris'>
+    <pose>0 0 0.194923 0 0 0</pose>
+    <link name='base_link'>
+      <velocity_decay>
+        <linear>0.0</linear>
+        <angular>0.0</angular>
+      </velocity_decay>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>1.5</mass>
+        <inertia>
+          <ixx>0.008</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.015</iyy>
+          <iyz>0</iyz>
+          <izz>0.017</izz>
+        </inertia>
+      </inertial>
+      <collision name='base_link_collision'>
+        <pose>0 0 -0.08 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.47 0.47 0.23</size>
+          </box>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <max_vel>100.0</max_vel>
+              <min_depth>0.001</min_depth>
+            </ode>
+          </contact>
+          <friction>
+            <ode>
+              <mu>100000.0</mu>
+              <mu2>100000.0</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='base_link_visual'>
+        <geometry>
+          <mesh>
+            <uri>model://iris_with_standoffs/meshes/iris.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/DarkGrey</name>
+          </script-->
+          <ambient>.175 .175 .175  1.0</ambient>
+          <diffuse>.175 .175 .175  1.0</diffuse>
+          <specular>.175 .175 .175 1.000000</specular>
+        </material>
+      </visual>
+
+      <visual name='front_left_leg_visual'>
+        <pose>0.123 0.22 -0.11 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.005</radius>
+            <length>0.17</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/FlatBlack</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script-->
+          <ambient>0.1 0.1 0.1</ambient>
+          <diffuse>0.1 0.1 0.1</diffuse>
+          <specular>0.01 0.01 0.01 1.0</specular>
+        </material>
+      </visual>
+      <visual name='front_right_leg_visual'>
+        <pose>0.123 -0.22 -0.11 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.005</radius>
+            <length>0.17</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/FlatBlack</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script-->
+          <ambient>0.1 0.1 0.1</ambient>
+          <diffuse>0.1 0.1 0.1</diffuse>
+          <specular>0.01 0.01 0.01 1.0</specular>
+        </material>
+      </visual>
+      <visual name='rear_left_leg_visual'>
+        <pose>-0.140 0.21 -0.11 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.005</radius>
+            <length>0.17</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/FlatBlack</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script-->
+          <ambient>0.1 0.1 0.1</ambient>
+          <diffuse>0.1 0.1 0.1</diffuse>
+          <specular>0.01 0.01 0.01 1.0</specular>
+        </material>
+      </visual>
+      <visual name='rear_right_leg_visual'>
+        <pose>-0.140 -0.21 -0.11 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.005</radius>
+            <length>0.17</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/FlatBlack</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script-->
+          <ambient>0.1 0.1 0.1</ambient>
+          <diffuse>0.1 0.1 0.1</diffuse>
+          <specular>0.01 0.01 0.01 1.0</specular>
+        </material>
+      </visual>
+    </link>
+    <link name='iris/ground_truth/odometry_sensorgt_link'>
+      <pose>0 0 0 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.15</mass>
+        <inertia>
+          <ixx>0.0001</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.0002</iyy>
+          <iyz>0</iyz>
+          <izz>0.0002</izz>
+        </inertia>
+      </inertial>
+    </link>
+    <joint name='iris/ground_truth/odometry_sensorgt_joint' type='revolute'>
+      <child>iris/ground_truth/odometry_sensorgt_link</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>0</lower>
+          <upper>0</upper>
+          <effort>0</effort>
+          <velocity>0</velocity>
+        </limit>
+        <dynamics>
+          <damping>1.0</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <link name='imu_link'>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.15</mass>
+        <inertia>
+          <ixx>0.00001</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.00002</iyy>
+          <iyz>0</iyz>
+          <izz>0.00002</izz>
+        </inertia>
+      </inertial>
+      <sensor name="imu_sensor" type="imu">
+        <pose>0 0 0 3.141593 0 0</pose>
+        <always_on>1</always_on>
+        <update_rate>1000.0</update_rate>
+      </sensor>
+    </link>
+    <joint name='iris/imu_joint' type='revolute'>
+      <child>imu_link</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>0</lower>
+          <upper>0</upper>
+          <effort>0</effort>
+          <velocity>0</velocity>
+        </limit>
+        <dynamics>
+          <damping>1.0</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+<!--
+    <link name='iris/imugt_link'>
+      <pose>0 0 0 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>1e-02</mass>
+        <inertia>
+          <ixx>0.0002</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.0002</iyy>
+          <iyz>0</iyz>
+          <izz>0.0002</izz>
+        </inertia>
+      </inertial>
+    </link>
+    <joint name='iris/imugt_joint' type='revolute'>
+      <child>iris/imugt_link</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>0</lower>
+          <upper>0</upper>
+          <effort>0</effort>
+          <velocity>0</velocity>
+        </limit>
+        <dynamics>
+          <spring_reference>0</spring_reference>
+          <spring_stiffness>0</spring_stiffness>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+    </joint>
+-->
+    <link name='rotor_0'>
+      <pose>0.13 -0.22 0.023 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>9.75e-06</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000166704</iyy>
+          <iyz>0</iyz>
+          <izz>0.000167604</izz>
+        </inertia>
+      </inertial>
+      <collision name='rotor_0_collision'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <cylinder>
+            <length>0.005</length>
+            <radius>0.1</radius>
+          </cylinder>
+        </geometry>
+        <surface>
+          <contact>
+            <ode/>
+          </contact>
+          <friction>
+            <ode/>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='rotor_0_visual'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/Blue</name>
+            <uri>__default__</uri>
+          </script-->
+          <ambient>0 0 1</ambient>
+          <diffuse>0 0 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+      <gravity>1</gravity>
+      <velocity_decay/>
+      <self_collide>0</self_collide>
+    </link>
+    <joint name='rotor_0_joint' type='revolute'>
+      <child>rotor_0</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+        <dynamics>
+          <damping>0.004</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <link name='rotor_1'>
+      <pose>-0.13 0.2 0.023 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>9.75e-06</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000166704</iyy>
+          <iyz>0</iyz>
+          <izz>0.000167604</izz>
+        </inertia>
+      </inertial>
+      <collision name='rotor_1_collision'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <cylinder>
+            <length>0.005</length>
+            <radius>0.1</radius>
+          </cylinder>
+        </geometry>
+        <surface>
+          <contact>
+            <ode/>
+          </contact>
+          <friction>
+            <ode/>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='rotor_1_visual'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://iris_with_standoffs/meshes/iris_prop_ccw.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/White</name>
+            <uri>__default__</uri>
+          </script-->
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>.1 .1 .1 1</specular>
+        </material>
+      </visual>
+      <gravity>1</gravity>
+      <velocity_decay/>
+      <self_collide>0</self_collide>
+    </link>
+    <joint name='rotor_1_joint' type='revolute'>
+      <child>rotor_1</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+        <dynamics>
+          <damping>0.004</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <link name='rotor_2'>
+      <pose>0.13 0.22 0.023 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>9.75e-06</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000166704</iyy>
+          <iyz>0</iyz>
+          <izz>0.000167604</izz>
+        </inertia>
+      </inertial>
+      <collision name='rotor_2_collision'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <cylinder>
+            <length>0.005</length>
+            <radius>0.1</radius>
+          </cylinder>
+        </geometry>
+        <surface>
+          <contact>
+            <ode/>
+          </contact>
+          <friction>
+            <ode/>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='rotor_2_visual'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/Blue</name>
+            <uri>__default__</uri>
+          </script-->
+          <ambient>0 0 1</ambient>
+          <diffuse>0 0 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+      <gravity>1</gravity>
+      <velocity_decay/>
+      <self_collide>0</self_collide>
+    </link>
+    <joint name='rotor_2_joint' type='revolute'>
+      <child>rotor_2</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+        <dynamics>
+          <damping>0.004</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <link name='rotor_3'>
+      <pose>-0.13 -0.2 0.023 0 -0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 -0 0</pose>
+        <mass>0.025</mass>
+        <inertia>
+          <ixx>9.75e-06</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000166704</iyy>
+          <iyz>0</iyz>
+          <izz>0.000167604</izz>
+        </inertia>
+      </inertial>
+      <collision name='rotor_3_collision'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <cylinder>
+            <length>0.005</length>
+            <radius>0.1</radius>
+          </cylinder>
+        </geometry>
+        <surface>
+          <contact>
+            <ode/>
+          </contact>
+          <friction>
+            <ode/>
+          </friction>
+        </surface>
+      </collision>
+      <visual name='rotor_3_visual'>
+        <pose>0 0 0 0 -0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1 1 1</scale>
+            <uri>model://iris_with_standoffs/meshes/iris_prop_cw.dae</uri>
+          </mesh>
+        </geometry>
+        <material>
+          <!--script>
+            <name>Gazebo/White</name>
+            <uri>__default__</uri>
+          </script-->
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>.1 .1 .1 1</specular>
+        </material>
+      </visual>
+      <gravity>1</gravity>
+      <velocity_decay/>
+      <self_collide>0</self_collide>
+    </link>
+    <joint name='rotor_3_joint' type='revolute'>
+      <child>rotor_3</child>
+      <parent>base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+        <dynamics>
+          <damping>0.004</damping>
+        </dynamics>
+        <use_parent_model_frame>1</use_parent_model_frame>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper>
+        </ode>
+      </physics>
+    </joint>
+    <static>0</static>
+
+    <!-- plugins -->
+    <plugin filename="libignition-gazebo-joint-state-publisher-system.so"
+      name="ignition::gazebo::systems::JointStatePublisher">
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp>
+      <forward>0 1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_0</link_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp>
+      <forward>0 -1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_0</link_name>
+    </plugin>
+
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp>
+      <forward>0 1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_1</link_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp>
+      <forward>0 -1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_1</link_name>
+    </plugin>
+
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp>
+      <forward>0 -1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_2</link_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp>
+      <forward>0 1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_2</link_name>
+    </plugin>
+
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>0.084 0 0</cp>
+      <forward>0 -1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_3</link_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-lift-drag-system.so"
+        name="ignition::gazebo::systems::LiftDrag">
+      <a0>0.3</a0>
+      <alpha_stall>1.4</alpha_stall>
+      <cla>4.2500</cla>
+      <cda>0.10</cda>
+      <cma>0.00</cma>
+      <cla_stall>-0.025</cla_stall>
+      <cda_stall>0.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.002</area>
+      <air_density>1.2041</air_density>
+      <cp>-0.084 0 0</cp>
+      <forward>0 1 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>rotor_3</link_name>
+    </plugin>
+
+    <plugin filename="libignition-gazebo-apply-joint-force-system.so"
+      name="ignition::gazebo::systems::ApplyJointForce">
+      <joint_name>rotor_0_joint</joint_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-apply-joint-force-system.so"
+      name="ignition::gazebo::systems::ApplyJointForce">
+      <joint_name>rotor_1_joint</joint_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-apply-joint-force-system.so"
+      name="ignition::gazebo::systems::ApplyJointForce">
+      <joint_name>rotor_2_joint</joint_name>
+    </plugin>
+    <plugin filename="libignition-gazebo-apply-joint-force-system.so"
+      name="ignition::gazebo::systems::ApplyJointForce">
+      <joint_name>rotor_3_joint</joint_name>
+    </plugin>
+
+    <plugin name="ArduPilotPlugin" filename="libArduPilotPlugin.so">
+      <!-- Port settings -->
+      <fdm_addr>127.0.0.1</fdm_addr>
+      <fdm_port_in>9002</fdm_port_in>
+      <connectionTimeoutMaxCount>5</connectionTimeoutMaxCount>
+      <lock_step>1</lock_step>
+
+      <!-- Frame conventions
+        Require by ArduPilot: change model and gazebo from XYZ to XY-Z coordinates
+      -->
+      <modelXYZToAirplaneXForwardZDown>0 0 0 3.141593 0 0</modelXYZToAirplaneXForwardZDown>
+      <gazeboXYZToNED>0 0 0 3.141593 0 0</gazeboXYZToNED>
+
+      <!-- Sensors -->
+      <imuName>imu_sensor</imuName>
+
+      <!--
+          incoming control command [0, 1]
+          so offset it by 0 to get [0, 1]
+          and divide max target by 1.
+          offset = 0
+          multiplier = 838 max rpm / 1 = 838
+        -->
+      <control channel="0">
+        <jointName>rotor_0_joint</jointName>
+        <useForce>1</useForce>
+        <multiplier>838</multiplier>
+        <offset>0</offset>
+        <servo_min>1100</servo_min>
+        <servo_max>1900</servo_max>
+        <type>VELOCITY</type>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2.5</cmd_max>
+        <cmd_min>-2.5</cmd_min>
+        <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
+      </control>
+      
+      <control channel="1">
+        <jointName>rotor_1_joint</jointName>
+        <useForce>1</useForce>
+        <multiplier>838</multiplier>
+        <offset>0</offset>
+        <servo_min>1100</servo_min>
+        <servo_max>1900</servo_max>
+        <type>VELOCITY</type>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2.5</cmd_max>
+        <cmd_min>-2.5</cmd_min>
+        <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
+      </control>
+
+      <control channel="2">
+        <jointName>rotor_2_joint</jointName>
+        <useForce>1</useForce>
+        <multiplier>-838</multiplier>
+        <offset>0</offset>
+        <servo_min>1100</servo_min>
+        <servo_max>1900</servo_max>
+        <type>VELOCITY</type>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2.5</cmd_max>
+        <cmd_min>-2.5</cmd_min>
+        <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
+      </control>
+
+      <control channel="3">
+        <jointName>rotor_3_joint</jointName>
+        <useForce>1</useForce>
+        <multiplier>-838</multiplier>
+        <offset>0</offset>
+        <servo_min>1100</servo_min>
+        <servo_max>1900</servo_max>
+        <type>VELOCITY</type>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2.5</cmd_max>
+        <cmd_min>-2.5</cmd_min>
+        <controlVelocitySlowdownSim>1</controlVelocitySlowdownSim>
+      </control>
+    </plugin>
+
+  </model>
+</sdf>
+
+--- Config Diff ---
+--- /home/furkan/s500_sim/ardupilot_gazebo/models/iris_with_standoffs/model.config	2026-09-18 16:33:05.635056207 +0300
++++ /home/furkan/s500_sim/ardupilot_gazebo/models/s500_custom_with_ardupilot/model.config	2026-09-18 17:45:40.496376153 +0300
+@@ -1,7 +1,7 @@
+ <?xml version="1.0"?>
+ 
+ <model>
+-  <name>Iris with Standoffs</name>
++  <name>s500_custom_with_ardupilot</name>
+   <version>1.0</version>
+   <sdf version="1.6">model.sdf</sdf>
+ 
+@@ -26,7 +26,10 @@
+ 
+ 
+   <description>
+-    A copy of the 3DR Iris model taken from
++    DRAFT: s500_custom_with_ardupilot.
++    This model currently uses Iris physical properties (mass, inertia, motor positions, and propeller physics).
++    It is NOT physically representative of an S500 yet.
++    Original text: A copy of the 3DR Iris model taken from
+     https://github.com/PX4/sitl_gazebo/tree/master/models
+     Local modifications include adding standoffs,
+     inertia and collision updates..
+
+--- SDF Diff ---
+--- /home/furkan/s500_sim/ardupilot_gazebo/models/iris_with_standoffs/model.sdf	2026-09-18 16:33:05.635056207 +0300
++++ /home/furkan/s500_sim/ardupilot_gazebo/models/s500_custom_with_ardupilot/model.sdf	2026-09-18 17:46:16.691025211 +0300
+@@ -1,6 +1,6 @@
+ <?xml version='1.0'?>
+-<sdf version='1.5'>
+-  <model name='iris'>
++<sdf version='1.7'>
++  <model name='s500_custom_with_ardupilot'>
+     <pose>0 0 0.194923 0 0 0</pose>
+     <link name='base_link'>
+       <velocity_decay>
+
+--- Dahil Edilen Alt Modeller (iris_with_standoffs üzerinden) ---
+Alt model yok (iris_with_standoffs kendi başına base model, başka <include> <uri>model://... barındırmıyor).
+NOT: Görsel mesh dosyaları (örn. <uri>model://iris_with_standoffs/meshes/...</uri>) hâlâ iris_with_standoffs klasörüne bağlıdır.
+
+--- IMU Tanımı (model.sdf:183) ---
+<sensor name="imu_sensor" type="imu">
+...<pose>0 0 0 3.141593 0 0</pose>
+...
+
+--- Motor/Joint Tanımları ve Fiziksel Değerler ---
+Örnek (rotor_0): Her rotorun kütlesi 0.025 kg.
+<joint name='rotor_0_joint' type='revolute'>...
+<link name='rotor_0'>
+  <inertial>
+    <mass>0.025</mass>...
+Modelin tüm link kütlelerinin toplamı 1.9 kg.
+
+4. World içindeki <include>, <uri> ve <name> model isim zinciri
+- World dosyası s500_custom_runway.world şu uri'yi yükler: <uri>model://s500_custom_with_ardupilot</uri>
+- Bu model s500_custom_with_ardupilot klasöründen yüklenir ve içindeki model adı: <model name='s500_custom_with_ardupilot'>
+- ArduPilotPlugin referansları:
+  Gerçek imuName değeri imu_sensor'dür; önceki raporda belirtilen uzun adres dosyada yoktur.
+  Eklenti DOĞRUDAN model içinde tanımlı olduğu için <imuName>imu_sensor</imuName> kullanılarak kendi içindeki <sensor name="imu_sensor" type="imu"> bloğuna işaret eder.
+  Aynı şekilde <jointName>rotor_0_joint</jointName> gibi referanslar da doğrudan <joint name='rotor_0_joint'> nesnelerine işaret eder.
+
+5. MAVProxy sürümü, Python ortamı, mavproxy_arm.py ve mesaj fonksiyonu
+MAVProxy Sürümü: 1.8.74
+Python Ortamı: Python 3.10.12
+Dosya Yolu: /home/furkan/.local/lib/python3.10/site-packages/MAVProxy/modules/mavproxy_arm.py
+
+--- İlgili Fonksiyonlar ---
+    def all_checks_enabled(self):
+        ''' returns true if the UAV is skipping any arming checks'''
+        arming_check = self.get_mav_param("ARMING_CHECK")
+        if arming_check is None:
+            # AntennaTracker doesn't have arming checks
+            return False
+        arming_mask = int(arming_check)
+        if arming_mask == 1:
+            return True
+        for bit in arming_masks.values():
+            if not arming_mask & bit and bit != 1:
+                return False
+        return True
+
+    def mavlink_packet(self, m):
+        mtype = m.get_type()
+        if mtype == 'HEARTBEAT' and m.type != mavutil.mavlink.MAV_TYPE_GCS:
+            armed = self.master.motors_armed()
+            if armed != self.was_armed:
+                self.was_armed = armed
+                if armed and not self.all_checks_enabled():
+                    self.say("Arming checks disabled")
+
+6. ARMING_CHECK ve ARMING_SKIPCHK İçin Kayıtlı Değerler
+mav.parm, parametre anlık kaydıdır; uçuşun tamamını doğrulayan kayıt değildir.
+Dosya: /home/furkan/s500_sim/iris_test/mav.parm
+Tarih: Sep 18 16:44
+Değerler:
+ARMING_CHECK: (Dosyada bulunamadı, çünkü ArduPilot 4.7+ sürümünde kaldırıldı)
+ARMING_SKIPCHK: 0
+
+7. ign sdf -k komutları ve çıktıları
+--- Model Testi ---
+Komut: export IGN_GAZEBO_RESOURCE_PATH=/home/furkan/s500_sim/ardupilot_gazebo/models && ign sdf -k /home/furkan/s500_sim/ardupilot_gazebo/models/s500_custom_with_ardupilot/model.sdf
+Çıktı: Valid.
+Çıkış Kodu: 0
+
+--- World Testi ---
+Komut: export SDF_PATH=/home/furkan/s500_sim/ardupilot_gazebo/models && ign sdf -k /home/furkan/s500_sim/ardupilot_gazebo/worlds/s500_custom_runway.world
+Çıktı: Valid.
+Çıkış Kodu: 0
+
+8. Orijinal dosyaların değişmediğinin Git durumu/farklarıyla kontrolü
+--- Git Status ---
+Üzerinde bulunulan dal: fortress
+Dalınız 'origin/fortress' ile güncel.
+
+İzlenmeyen dosyalar:
+	models/s500_custom_with_ardupilot/
+	worlds/s500_custom_runway.world
+
+--- Git Diff ---
+(Boş çıktı, yani takip edilen hiçbir orijinal dosyada değişiklik yapılmadı)

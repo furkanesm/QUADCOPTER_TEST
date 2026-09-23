@@ -1,0 +1,26 @@
+{
+  "scenario": "test_failure",
+  "passed": false,
+  "duration_s": 3.01,
+  "lua_sha256": "cf9de2466767148404c4603a33e5cb1f202e019e50c3073c31e7a3215fb54864",
+  "sitl_version": "ArduCopter V4.7.1 (dbe79216)",
+  "active_disarm_delay_s": null,
+  "failure_reasons": [
+    "Zaman a\u015f\u0131m\u0131 (2.0s)! Beklenen durum logu bulunamad\u0131: 'GERCEKLESMEZ_KASITLI_HATA_LOGU'"
+  ],
+  "telemetry_metrics": {
+    "takeoff_freeze_pos_ned": null,
+    "takeoff_freeze_yaw_deg": null,
+    "kalkis_dist_achieved_m": null,
+    "kalkis_alt_achieved_m": null,
+    "obs_dist_achieved_m": null,
+    "return_dist_achieved_m": null,
+    "touchdown_alt_achieved_m": null,
+    "min_cruise_alt_m": null,
+    "max_cruise_alt_m": null,
+    "cruise_altitude_breached": false,
+    "was_armed_seen": false,
+    "final_disarmed_confirmed": false
+  },
+  "log_count": 0
+}
