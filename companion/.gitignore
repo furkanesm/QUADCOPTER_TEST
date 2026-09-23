@@ -1,0 +1,50 @@
+# Dataset
+Kaggle_Road_Segmentation_Dataset/
+dataset_analysis/
+dataset_analysis_full/
+dataset_split/
+
+# Script çıktıları
+out/
+out2/
+out3/
+out4/
+out_final_verification/
+out_img0002_review/
+out_new_map_review/
+out_new_map_review_v2/
+out_real_test/
+out_thresholds_review/
+offline_results/
+offline_planning_results/
+unity_review/
+*_out.txt
+*out.txt
+report*.xml
+pytest_out*.txt
+
+# Geçici görseller
+frame_000000.png
+frame_000000 copy.png
+rgb.png
+local_connect_mask.png
+scenario_*.png
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+run_blender_final.py
+run_blender_review.py
+run_blender_thresholds.py
+run_centering_test.py
+run_clearance_tests.py
+run_robust_review.py
+run_repair_tests.py
+run_strict_test.py
+run_validation_phase12.py
+run_final_tests.py
+verify_passages.py
+run_img0002_review.py
+run_test_c.py
+verify_splits.py
