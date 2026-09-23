@@ -1,0 +1,135 @@
+<?xml version='1.0' encoding='utf-8'?>
+<sdf version="1.7">
+  <world name="s500_custom_runway">
+    <plugin filename="libignition-gazebo-physics-system.so" name="ignition::gazebo::systems::Physics">
+    </plugin>
+    <plugin filename="libignition-gazebo-user-commands-system.so" name="ignition::gazebo::systems::UserCommands">
+    </plugin>
+    <plugin filename="libignition-gazebo-scene-broadcaster-system.so" name="ignition::gazebo::systems::SceneBroadcaster">
+    </plugin>
+    <plugin filename="libignition-gazebo-imu-system.so" name="ignition::gazebo::systems::Imu">
+    </plugin>
+    <scene>
+      <ambient>1.0 1.0 1.0</ambient>
+      <background>0.72 0.76 0.80 1</background>
+    </scene>
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.8 0.8 0.8 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+    <model name="hasmetlimiss_terrain">
+      <static>true</static>
+      <pose>0 0 0 1.57079632679 0 0</pose>
+      <link name="terrain">
+        <visual name="terrain_visual">
+          <geometry>
+            <mesh>
+              <uri>model://hasmetlimiss_terrain/meshes/hasmetlimiss.obj</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="terrain_collision">
+          <geometry>
+            <mesh>
+              <uri>model://hasmetlimiss_terrain/meshes/hasmetlimiss.obj</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+    <include>
+      <uri>model://s500_custom_with_ardupilot</uri>
+      <pose>-33 0 0.243955000 0 0 0</pose>
+    </include>
+    <model name="yesil_zemin_80x80">
+      <static>true</static>
+      <pose>0 0 0.005955 0 0 0</pose>
+      <link name="zemin">
+        <visual name="kuzey">
+          <pose>0 25 0 0 0 0</pose>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 30</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.18 0.42 0.10 1</ambient>
+            <diffuse>0.24 0.55 0.14 1</diffuse>
+            <specular>0 0 0 1</specular>
+          </material>
+          <cast_shadows>false</cast_shadows>
+        </visual>
+        <visual name="guney">
+          <pose>0 -25 0 0 0 0</pose>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 30</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.18 0.42 0.10 1</ambient>
+            <diffuse>0.24 0.55 0.14 1</diffuse>
+            <specular>0 0 0 1</specular>
+          </material>
+          <cast_shadows>false</cast_shadows>
+        </visual>
+        <visual name="dogu">
+          <pose>25 0 0 0 0 0</pose>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>30 20</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.18 0.42 0.10 1</ambient>
+            <diffuse>0.24 0.55 0.14 1</diffuse>
+            <specular>0 0 0 1</specular>
+          </material>
+          <cast_shadows>false</cast_shadows>
+        </visual>
+        <visual name="bati">
+          <pose>-25 0 0 0 0 0</pose>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>30 20</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.18 0.42 0.10 1</ambient>
+            <diffuse>0.24 0.55 0.14 1</diffuse>
+            <specular>0 0 0 1</specular>
+          </material>
+          <cast_shadows>false</cast_shadows>
+        </visual>
+      </link>
+    </model>
+    <model name="s500_kalkis_destegi">
+      <static>true</static>
+      <pose>-33 0 -0.044045000 0 0 0</pose>
+      <link name="destek">
+        <collision name="temas">
+          <geometry>
+            <box>
+              <size>4 4 0.10</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+  </world>
+</sdf>
