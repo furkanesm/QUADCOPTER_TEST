@@ -34,3 +34,17 @@ scenario_*.png
 __pycache__/
 *.pyc
 .pytest_cache/
+run_blender_final.py
+run_blender_review.py
+run_blender_thresholds.py
+run_centering_test.py
+run_clearance_tests.py
+run_robust_review.py
+run_repair_tests.py
+run_strict_test.py
+run_validation_phase12.py
+run_final_tests.py
+verify_passages.py
+run_img0002_review.py
+run_test_c.py
+verify_splits.py
