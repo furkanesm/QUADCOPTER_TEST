@@ -89,7 +89,7 @@ local MAV_CMD_USER_1              = 31010 -- Companion bilgisayar (Jetson) komut
 -- Görev Durumları (State Machine)
 local STATE_BEKLEME               = 1
 local STATE_HAZIRLIK              = 2
-local STATE_KALKIS                = 3
+local STATE_DIKEY_TIRMANIS        = 3
 local STATE_HEDEF_BEKLE           = 4
 local STATE_HEDEFE_GIT            = 5
 local STATE_HEDEF_KONUMUNDA_BEKLE = 6
@@ -97,18 +97,22 @@ local STATE_DONUS                 = 7
 local STATE_INIS                  = 8
 local STATE_TAMAMLANDI            = 9
 local STATE_PILOT_MUDAHALESI      = 10
+local STATE_ILERI_HAREKET         = 11
+
+local STATE_KALKIS                = STATE_DIKEY_TIRMANIS -- Geriye dönük uyumluluk
 
 local STATE_NAMES = {
     [STATE_BEKLEME]               = "BEKLEME",
     [STATE_HAZIRLIK]              = "HAZIRLIK",
-    [STATE_KALKIS]                = "KALKIS",
+    [STATE_DIKEY_TIRMANIS]        = "DIKEY_TIRMANIS",
     [STATE_HEDEF_BEKLE]           = "HEDEF_BEKLE",
     [STATE_HEDEFE_GIT]            = "HEDEFE_GIT",
     [STATE_HEDEF_KONUMUNDA_BEKLE] = "HEDEF_KONUMUNDA_BEKLE",
     [STATE_DONUS]                 = "DONUS",
     [STATE_INIS]                  = "INIS",
     [STATE_TAMAMLANDI]            = "TAMAMLANDI",
-    [STATE_PILOT_MUDAHALESI]      = "PILOT_MUDAHALESI"
+    [STATE_PILOT_MUDAHALESI]      = "PILOT_MUDAHALESI",
+    [STATE_ILERI_HAREKET]         = "ILERI_HAREKET"
 }
 
 -- Olay Durum Kodları (Jetson Sözleşmesi - param5)
@@ -142,13 +146,15 @@ local IRTIFA_ALT_SINIR_M      = 31.0   -- İrtifa kabul bandı alt sınır (m)
 local IRTIFA_UST_SINIR_M      = 35.0   -- İrtifa kabul bandı üst sınır (m)
 local IRTIFA_HATA_TOLERANS_M  = 0.5    -- İrtifa yaklaşım toleransı (m)
 
-local KALKIS_ILERELEME_M      = 40.0   -- İleri yönlü 3D kalkış mesafesi (m)
+local KALKIS_ILERELEME_M      = 33.0   -- İleri yönlü 3D kalkış mesafesi (m)
 local KALKIS_YATAY_TOLERANS_M = 2.0    -- Kalkış yatay varış toleransı (m)
 local GOZLEM_YATAY_TOLERANS_M = 1.0    -- Gözlem noktası yatay toleransı (m)
 local DONUS_YATAY_TOLERANS_M  = 1.0    -- Dönüş kalkış noktası yatay toleransı (m)
 
 local KARARLILIK_SURESI_MS    = 2000   -- 2.0 saniye kesintisiz kararlılık süresi
 local LINK_KOPMA_TIMEOUT_MS   = 5000   -- 5.0 saniye mesaj yoksa link koptu uyarısı
+local TIMEOUT_DIKEY_TIRMANIS_MS= 45000  -- 45 saniye dikey tırmanış zaman aşımı
+local TIMEOUT_ILERI_HAREKET_MS = 60000  -- 60 saniye ileri intikal zaman aşımı
 local TIMEOUT_HEDEF_BEKLE_MS  = 90000  -- 90 saniye zaman aşımı (HEDEF_BEKLE failsafe)
 local TIMEOUT_KONUM_BEKLE_MS  = 60000  -- 60 saniye zaman aşımı (HEDEF_KONUMUNDA_BEKLE failsafe)
 local TIMEOUT_GENEL_HAREKET_MS= 120000 -- 120 saniye intikal zaman aşımı
@@ -166,15 +172,19 @@ local state_entry_time_ms   = 0
 local BASLANGIC_KONUMU      = nil      -- { kuzey = float, dogu = float, z = float }
 local ILERI_YAW             = nil      -- Yerde bir kez okunan ilk yaw açısı (radyan)
 local HEDEF_KONUM           = nil      -- { x = float, y = float } (NED Kuzey/Doğu)
+local takeoff_return_point_ned = nil   -- Yerde kilitlenen fiziksel kalkış/dönüş referansı
+local hazirlik_verified     = false    -- Yalnızca mevcut hazırlık döngüsünde iki referans birlikte doğrulandığında true olur
 
 -- Hazırlık Aşaması Değişkenleri
 local hazirlik_samples      = {}       -- EKF relative_position_NED_origin örnekleri
 local arm_requested         = false
 local arm_request_time_ms   = 0
 
--- Kalkış Değişkenleri
-local kalkis_started        = false
-local kalkis_3d_steered     = false
+-- Kalkış ve İntikal Değişkenleri
+local kalkis_started        = false    -- Eski kalkış bayrağı (uyumluluk için korunuyor)
+local kalkis_3d_steered     = false    -- Eski yönlendirme bayrağı (uyumluluk için korunuyor)
+local dikey_started         = false    -- Faz 1: Dikey tırmanış başlatıldı bayrağı
+local ileri_started         = false    -- Faz 2: İleri intikal başlatıldı bayrağı
 local kalkis_hedef_kuzey    = 0.0
 local kalkis_hedef_dogu     = 0.0
 local kalkis_hedef_z        = 0.0
@@ -539,6 +549,25 @@ local function process_mavlink_queue(current_time_ms)
                     end
                     send_app_ack(status, 0, seq, sess_id, chan)
                     log_info(string.format("Yeni Jetson oturumu basariyla acildi (Session ID: %d, Seq: %d).", sess_id, seq))
+
+                    -- Yalnızca izin verilen hazırlık/yer durumlarında ve geçerli hazırlık döngüsünde doğrulanmış referans varsa yeniden yayımla
+                    local allow_republish = (current_state == STATE_BEKLEME or current_state == STATE_HAZIRLIK)
+                                            and (not arming:is_armed())
+                                            and hazirlik_verified
+                                            and (BASLANGIC_KONUMU ~= nil)
+                                            and (takeoff_return_point_ned ~= nil)
+                    if allow_republish then
+                        log_info(string.format("BASLANGIC_KONUMU kilitlendi (Session ID: %d): Kuzey=%.2fm, Dogu=%.2fm, Z=%.2fm",
+                            active_session_id, BASLANGIC_KONUMU.kuzey, BASLANGIC_KONUMU.dogu, BASLANGIC_KONUMU.z))
+                        log_info(string.format("takeoff_return_point_ned kilitlendi (Session ID: %d): [%.2f, %.2f, %.2f]",
+                            active_session_id, takeoff_return_point_ned.x, takeoff_return_point_ned.y, takeoff_return_point_ned.z))
+                    else
+                        -- Referans kesinlikle silinmez, korunur; yeniden yayımlanmama gerekçesi açıkça bildirilir
+                        if BASLANGIC_KONUMU then
+                            log_info(string.format("Mevcut donus referansi korundu ancak yeni oturum icin yeniden yayimlanmadi (Durum: %d, Armed: %s, HazirlikDogrulandi: %s).",
+                                current_state, tostring(arming:is_armed()), tostring(hazirlik_verified)))
+                        end
+                    end
                 end
                 goto continue_loop
             end
@@ -713,6 +742,9 @@ local function update()
             log_info(string.format("Gorev tetiklendi (Tetikleyici: %s). HAZIRLIK durumuna geciliyor.",
                 guided_triggered and "GUIDED Mod" or "RC Anahtari"))
             hazirlik_samples = {}
+            hazirlik_verified = false
+            BASLANGIC_KONUMU = nil
+            takeoff_return_point_ned = nil
             arm_requested = false
             change_state(STATE_HAZIRLIK)
         end
@@ -762,8 +794,18 @@ local function update()
                 dogu  = sum_y / 5.0,
                 z     = sum_z / 5.0
             }
-            log_info(string.format("BASLANGIC_KONUMU kilitlendi: Kuzey=%.2fm, Dogu=%.2fm, Z=%.2fm (hazirlik_samples boyutu: %d, ornekleme durduruldu)",
-                BASLANGIC_KONUMU.kuzey, BASLANGIC_KONUMU.dogu, BASLANGIC_KONUMU.z, #hazirlik_samples))
+            takeoff_return_point_ned = { x = BASLANGIC_KONUMU.kuzey, y = BASLANGIC_KONUMU.dogu, z = BASLANGIC_KONUMU.z }
+            hazirlik_verified = true
+
+            if active_session_id then
+                log_info(string.format("BASLANGIC_KONUMU kilitlendi (Session ID: %d): Kuzey=%.2fm, Dogu=%.2fm, Z=%.2fm (hazirlik_samples boyutu: %d, ornekleme durduruldu)",
+                    active_session_id, BASLANGIC_KONUMU.kuzey, BASLANGIC_KONUMU.dogu, BASLANGIC_KONUMU.z, #hazirlik_samples))
+                log_info(string.format("takeoff_return_point_ned kilitlendi (Session ID: %d): [%.2f, %.2f, %.2f]",
+                    active_session_id, takeoff_return_point_ned.x, takeoff_return_point_ned.y, takeoff_return_point_ned.z))
+            else
+                log_info(string.format("BASLANGIC_KONUMU orneklendi: Kuzey=%.2fm, Dogu=%.2fm, Z=%.2fm (hazirlik_samples boyutu: %d, oturum bekleniyor)",
+                    BASLANGIC_KONUMU.kuzey, BASLANGIC_KONUMU.dogu, BASLANGIC_KONUMU.z, #hazirlik_samples))
+            end
         end
 
         -- B. İleri Yaw Açısının Bir Kez Alınması (Fiziksel Kurulum Notu)
@@ -814,91 +856,136 @@ local function update()
             return update, UPDATE_RATE_MS
         end
 
-        -- Başarılı: Kalkış durumuna geç
+        -- Başarılı: Dikey tırmanış durumuna geç
         log_info("Hazirlik tamamlandi: WP_SPD=1.0m/s dogrulandi, GUIDED mod devrede, drone arm oldu.")
         kalkis_started = false
         kalkis_3d_steered = false
-        change_state(STATE_KALKIS)
+        dikey_started = false
+        ileri_started = false
+        change_state(STATE_DIKEY_TIRMANIS)
 
     -- ========================================================================
-    -- 3. DURUM: KALKIŞ (Birleşik: 40m ileri + 33m irtifa, TEK hareket)
-    -- - Hedef nokta:
-    --   hedef_kuzey = BASLANGIC_KONUMU.kuzey + 40 * cos(ILERI_YAW)
-    --   hedef_dogu  = BASLANGIC_KONUMU.dogu  + 40 * sin(ILERI_YAW)
-    --   hedef_irtifa = 33.0m (Down: BASLANGIC_KONUMU.z - 33.0)
-    -- - Kabul aralığı: yatay < 2m VE |irtifa - 33m| < 0.5m (31-35m bandı).
-    -- - 2 saniye kararlılık sonrası HEDEF_BEKLE'ye geçilir.
+    -- 3. DURUM: DIKEY_TIRMANIS (Faz 1: Yerden Sadece Dikey 33m İrtifaya Çıkış)
+    -- - Hedef nokta: Yer kalkış noktasının tam üzerinde 33m irtifa
+    --   (kuzey = BASLANGIC_KONUMU.kuzey, dogu = BASLANGIC_KONUMU.dogu, z = BASLANGIC_KONUMU.z - 33.0)
+    -- - Yatay hareket yapılmaz; pusula yönü ILERI_YAW olarak korunur.
+    -- - Kabul kriteri: Yatay kayma < 2m VE |irtifa - 33.0| < 0.5m (31-35m bandı).
+    -- - 2 saniye kararlılık sonrası ILERI_HAREKET durumuna geçilir.
+    -- - Failsafe: 45s içinde irtifaya ulaşılamazsa veya kalkış reddedilirse INIS'e geçilir.
     -- ========================================================================
-    elseif current_state == STATE_KALKIS then
-        -- Tirmanis boyunca gelen canlilik mesajlarini tuket (20 mesajlik kuyruk tasmasin)
+    elseif current_state == STATE_DIKEY_TIRMANIS then
+        process_mavlink_queue(now_ms)
+
+        local dikey_hedef_z = BASLANGIC_KONUMU.z - HEDEF_IRTIFA_M
+        local dikey_vec = make_vector3f(BASLANGIC_KONUMU.kuzey, BASLANGIC_KONUMU.dogu, dikey_hedef_z)
+
+        if not dikey_started then
+            log_info(string.format("Faz 1 - Dikey Tirmanis baslatiliyor: Hedef irtifa %.1fm (Yer: [%.1f, %.1f], Hedef Z: %.1f)",
+                HEDEF_IRTIFA_M, BASLANGIC_KONUMU.kuzey, BASLANGIC_KONUMU.dogu, dikey_hedef_z))
+            local takeoff_ok = vehicle:start_takeoff(HEDEF_IRTIFA_M)
+            log_info(string.format("start_takeoff(%.1fm) cagirildi, donus degeri: %s", HEDEF_IRTIFA_M, tostring(takeoff_ok)))
+            if not takeoff_ok then
+                log_error("start_takeoff komutu reddedildi! Failsafe INIS durumuna geciliyor.")
+                change_state(STATE_INIS)
+                return update, UPDATE_RATE_MS
+            end
+            dikey_started = true
+        end
+
+        local cur_pos = ahrs:get_relative_position_NED_origin()
+        local cur_vel = ahrs:get_velocity_NED()
+        if cur_pos and cur_vel then
+            local rel_alt = BASLANGIC_KONUMU.z - cur_pos:z()
+            local vz_up   = -cur_vel:z()
+
+            -- Tırmanış boyunca aracı dikey eksende tut
+            vehicle:set_target_pos_NED(dikey_vec, true, math.deg(ILERI_YAW), false, 0.0, false, false)
+
+            local dx = cur_pos:x() - BASLANGIC_KONUMU.kuzey
+            local dy = cur_pos:y() - BASLANGIC_KONUMU.dogu
+            local horiz_drift = math.sqrt(dx*dx + dy*dy)
+            local alt_err = math.abs(rel_alt - HEDEF_IRTIFA_M)
+
+            -- Kabul kriterleri: yatay kayma < 2m VE |irtifa - 33.0| < 0.5m (31-35m bandı)
+            if horiz_drift < KALKIS_YATAY_TOLERANS_M and
+               alt_err < IRTIFA_HATA_TOLERANS_M and
+               rel_alt >= IRTIFA_ALT_SINIR_M and
+               rel_alt <= IRTIFA_UST_SINIR_M then
+
+                if not stability_start_ms then
+                    stability_start_ms = now_ms
+                    log_info(string.format("Dikey tirmanis hedef bandina girildi (Irtifa: %.2fm, Kayma: %.2fm). 2s kararlilik bekleniyor...",
+                        rel_alt, horiz_drift))
+                elseif (now_ms - stability_start_ms) >= KARARLILIK_SURESI_MS then
+                    log_info(string.format("Dikey tirmanis tamamlandi ve kararlilik saglandi (Irtifa: %.2fm). Faz 2 - ILERI_HAREKET durumuna geciliyor.",
+                        rel_alt))
+                    ileri_started = false
+                    change_state(STATE_ILERI_HAREKET)
+                    return update, UPDATE_RATE_MS
+                end
+            else
+                stability_start_ms = nil
+            end
+        end
+
+        -- Failsafe Zaman Aşımı (45 saniye)
+        if (now_ms - state_entry_time_ms) > TIMEOUT_DIKEY_TIRMANIS_MS then
+            log_warn("Dikey tirmanis 45s zaman asimi! Hedef irtifaya ulasilamadi, failsafe INIS durumuna geciliyor.")
+            change_state(STATE_INIS)
+            return update, UPDATE_RATE_MS
+        end
+
+    -- ========================================================================
+    -- 11. DURUM: ILERI_HAREKET (Faz 2: 33m İrtifada İleri Yönde 33m İntikal)
+    -- - Hedef nokta: 33m irtifada ILERI_YAW yönünde 33m ileri
+    --   hedef_kuzey = BASLANGIC_KONUMU.kuzey + KALKIS_ILERELEME_M * cos(ILERI_YAW)
+    --   hedef_dogu  = BASLANGIC_KONUMU.dogu  + KALKIS_ILERELEME_M * sin(ILERI_YAW)
+    --   hedef_irtifa = 33.0m (Down: BASLANGIC_KONUMU.z - 33.0)
+    -- - Kabul kriteri: Yatay mesafe < 2m VE |irtifa - 33.0| < 0.5m.
+    -- - İrtifa güvenlik denetimi: 31-35m bandı dışına taşarsa derhal failsafe İNİŞ (STATE_INIS).
+    -- - 2 saniye kararlılık sonrası referans noktası kilitlenir ve HEDEF_BEKLE'ye geçilir.
+    -- - Failsafe: 60s zaman aşımında failsafe İNİŞ (STATE_INIS) durumuna geçilir.
+    -- ========================================================================
+    elseif current_state == STATE_ILERI_HAREKET then
         process_mavlink_queue(now_ms)
 
         kalkis_hedef_kuzey = BASLANGIC_KONUMU.kuzey + KALKIS_ILERELEME_M * math.cos(ILERI_YAW)
         kalkis_hedef_dogu  = BASLANGIC_KONUMU.dogu  + KALKIS_ILERELEME_M * math.sin(ILERI_YAW)
         kalkis_hedef_z     = BASLANGIC_KONUMU.z - HEDEF_IRTIFA_M
 
-        -- Kalkış tırmanış motor profilini başlat
-        if not kalkis_started then
-            log_info(string.format("Birlesik 3D Kalkis baslatiliyor: 40m ileri (Pusula: %.1f deg), 33m irtifa. Hedef NED: [%.1f, %.1f, %.1f]",
+        local ileri_vec = make_vector3f(kalkis_hedef_kuzey, kalkis_hedef_dogu, kalkis_hedef_z)
+        vehicle:set_target_pos_NED(ileri_vec, true, math.deg(ILERI_YAW), false, 0.0, false, false)
+
+        if not ileri_started then
+            log_info(string.format("Faz 2 - Ileri Hareket baslatiliyor: 33m ileri (Pusula: %.1f deg), 33m irtifa. Hedef NED: [%.1f, %.1f, %.1f]",
                 math.deg(ILERI_YAW), kalkis_hedef_kuzey, kalkis_hedef_dogu, kalkis_hedef_z))
-            local takeoff_ok = vehicle:start_takeoff(HEDEF_IRTIFA_M)
-            log_info(string.format("start_takeoff(%.1fm) cagirildi, donus degeri: %s", HEDEF_IRTIFA_M, tostring(takeoff_ok)))
-            if not takeoff_ok then
-                log_error("start_takeoff komutu reddedildi! Failsafe DONUS durumuna geciliyor.")
-                change_state(STATE_DONUS)
-                return update, UPDATE_RATE_MS
-            end
-            kalkis_started = true
+            ileri_started = true
         end
 
-        -- Mevcut konumu, irtifayı ve tırmanış hızını kontrol et (eksik hız/konum asla 0.0 sayılmaz)
         local cur_pos = ahrs:get_relative_position_NED_origin()
-        local cur_vel = ahrs:get_velocity_NED()
-        if cur_pos and cur_vel then
+        if cur_pos then
             local rel_alt = BASLANGIC_KONUMU.z - cur_pos:z()
-            local vz_up   = -cur_vel:z()
-            local target_vec = make_vector3f(kalkis_hedef_kuzey, kalkis_hedef_dogu, kalkis_hedef_z)
-
-            if not kalkis_3d_steered then
-                -- İlk yönlendirme: Yerden ayrılma (irtifa >= 0.5m ve vz > 0.1m/s) teyit edilmelidir
-                local is_airborne = (rel_alt >= 0.5 and vz_up > 0.1)
-                if vehicle.get_likely_flying and not vehicle:get_likely_flying() then
-                    is_airborne = false
-                end
-
-                if is_airborne then
-                    local set_pos_ok = vehicle:set_target_pos_NED(target_vec, true, math.deg(ILERI_YAW), false, 0.0, false, false)
-                    if set_pos_ok then
-                        kalkis_3d_steered = true
-                        log_info(string.format("Yerden ayrilma teyit edildi (Irtifa: %.2fm, Vz: %.2fm/s). Birlesik 3D rotaya gecildi (set_target_pos_NED kabul: true).",
-                            rel_alt, vz_up))
-                    else
-                        log_warn(string.format("Yerden ayrilma teyit edildi (Irtifa: %.2fm, Vz: %.2fm/s), ancak set_target_pos_NED REDDEDILDI (donus: false). Tekrar denenecek.",
-                            rel_alt, vz_up))
-                    end
-                end
-            else
-                -- Başarılı ilk yönlendirmeden sonra hedef komutu kalkis_3d_steered bayrağı ile kesintisiz sürdürülür
-                vehicle:set_target_pos_NED(target_vec, true, math.deg(ILERI_YAW), false, 0.0, false, false)
-            end
-
             local dx = cur_pos:x() - kalkis_hedef_kuzey
             local dy = cur_pos:y() - kalkis_hedef_dogu
             local horiz_dist = math.sqrt(dx*dx + dy*dy)
             local alt_err = math.abs(rel_alt - HEDEF_IRTIFA_M)
 
-            -- Kabul kriterleri: yatay < 2m VE |irtifa - 33.0| < 0.5m (31-35m bandı içinde)
-            if horiz_dist < KALKIS_YATAY_TOLERANS_M and 
-               alt_err < IRTIFA_HATA_TOLERANS_M and 
-               rel_alt >= IRTIFA_ALT_SINIR_M and 
-               rel_alt <= IRTIFA_UST_SINIR_M then
-                
+            -- İrtifa güvenlik koruması: 31-35m bandı ihlalinde güvenli İNİŞ
+            if rel_alt < IRTIFA_ALT_SINIR_M or rel_alt > IRTIFA_UST_SINIR_M then
+                log_warn(string.format("Ileri hareket sirasinda irtifa bandi ihlali (%.2fm disinda: [%.1f, %.1f])! Failsafe INIS durumuna geciliyor.",
+                    rel_alt, IRTIFA_ALT_SINIR_M, IRTIFA_UST_SINIR_M))
+                change_state(STATE_INIS)
+                return update, UPDATE_RATE_MS
+            end
+
+            -- Kabul kriterleri: yatay < 2m VE |irtifa - 33.0| < 0.5m
+            if horiz_dist < KALKIS_YATAY_TOLERANS_M and alt_err < IRTIFA_HATA_TOLERANS_M then
                 if not stability_start_ms then
                     stability_start_ms = now_ms
-                    log_info(string.format("Kalkis hedef bandina girildi (Mesafe: %.2fm, Irtifa: %.2fm). 2s kararlilik bekleniyor...",
+                    log_info(string.format("Ileri hareket hedef bandina girildi (Mesafe: %.2fm, Irtifa: %.2fm). 2s kararlilik bekleniyor...",
                         horiz_dist, rel_alt))
                 elseif (now_ms - stability_start_ms) >= KARARLILIK_SURESI_MS then
-                    log_info(string.format("Kalkis tamamlandi ve kararlilik saglandi (Mesafe: %.2fm, Irtifa: %.2fm). HEDEF_BEKLE durumuna geciliyor.",
+                    log_info(string.format("Ileri hareket tamamlandi ve kararlilik saglandi (Mesafe: %.2fm, Irtifa: %.2fm). HEDEF_BEKLE durumuna geciliyor.",
                         horiz_dist, rel_alt))
                     change_state(STATE_HEDEF_BEKLE)
                     return update, UPDATE_RATE_MS
@@ -908,10 +995,10 @@ local function update()
             end
         end
 
-        -- Failsafe Zaman Aşımı (60 saniye)
-        if (now_ms - state_entry_time_ms) > 60000 then
-            log_warn("Kalkis 60s zaman asimi! Hedefe ulasilamadi, failsafe DONUS durumuna geciliyor.")
-            change_state(STATE_DONUS)
+        -- Failsafe Zaman Aşımı (60 saniye): Hedefe varılamazsa güvenli İNİŞ
+        if (now_ms - state_entry_time_ms) > TIMEOUT_ILERI_HAREKET_MS then
+            log_warn("Ileri hareket 60s zaman asimi! Hedefe ulasilamadi, failsafe INIS durumuna geciliyor.")
+            change_state(STATE_INIS)
             return update, UPDATE_RATE_MS
         end
 
@@ -1047,11 +1134,14 @@ local function update()
 
     -- ========================================================================
     -- 7. DURUM: DÖNÜŞ
-    -- - BASLANGIC_KONUMU'na (HAZIRLIK'ta kaydedilen gerçek konum, asla (0,0) değil) uç.
+    -- - takeoff_return_point_ned'e (varsa) veya BASLANGIC_KONUMU'na (fallback) uç.
     -- - Yatay mesafe < 1m olunca 2 saniye kararlılık bekle, İNİŞ'e geç.
     -- ========================================================================
     elseif current_state == STATE_DONUS then
-        local return_vec = make_vector3f(BASLANGIC_KONUMU.kuzey, BASLANGIC_KONUMU.dogu, BASLANGIC_KONUMU.z - HEDEF_IRTIFA_M)
+        local ret_ref = takeoff_return_point_ned or BASLANGIC_KONUMU
+        local ret_kuzey = ret_ref.x or ret_ref.kuzey
+        local ret_dogu  = ret_ref.y or ret_ref.dogu
+        local return_vec = make_vector3f(ret_kuzey, ret_dogu, BASLANGIC_KONUMU.z - HEDEF_IRTIFA_M)
         vehicle:set_target_pos_NED(return_vec, false, 0.0, false, 0.0, false, false)
 
         -- Kuyruktaki mesajları tüket
@@ -1059,16 +1149,27 @@ local function update()
 
         local cur_pos = ahrs:get_relative_position_NED_origin()
         if cur_pos then
-            local dx = cur_pos:x() - BASLANGIC_KONUMU.kuzey
-            local dy = cur_pos:y() - BASLANGIC_KONUMU.dogu
+            local rel_alt = BASLANGIC_KONUMU.z - cur_pos:z()
+            local dx = cur_pos:x() - ret_kuzey
+            local dy = cur_pos:y() - ret_dogu
             local horiz_dist = math.sqrt(dx*dx + dy*dy)
+            local alt_err = math.abs(rel_alt - HEDEF_IRTIFA_M)
 
-            if horiz_dist < DONUS_YATAY_TOLERANS_M then
+            -- Seyir irtifa güvenlik denetimi: Dönüş boyunca [31.0, 35.0] bandında kalınmalı
+            if rel_alt < IRTIFA_ALT_SINIR_M or rel_alt > IRTIFA_UST_SINIR_M then
+                log_warn(string.format("Donus sirasinda irtifa bandi ihlali (%.2fm disinda: [%.1f, %.1f])!",
+                    rel_alt, IRTIFA_ALT_SINIR_M, IRTIFA_UST_SINIR_M))
+            end
+
+            -- Başlangıca tam ulaşmadan ve irtifa bandı sağlanmadan inişe geçilmemesi
+            if horiz_dist < DONUS_YATAY_TOLERANS_M and alt_err < IRTIFA_HATA_TOLERANS_M then
                 if not stability_start_ms then
                     stability_start_ms = now_ms
-                    log_info(string.format("Kalkis noktasina yaklasildi (Mesafe: %.2fm). 2s kararlilik bekleniyor...", horiz_dist))
+                    log_info(string.format("Kalkis noktasina yaklasildi (Mesafe: %.2fm, Irtifa: %.2fm). 2s kararlilik bekleniyor...",
+                        horiz_dist, rel_alt))
                 elseif (now_ms - stability_start_ms) >= KARARLILIK_SURESI_MS then
-                    log_info(string.format("Kalkis noktasinda kararlilik saglandi (Mesafe: %.2fm). INIS durumuna geciliyor.", horiz_dist))
+                    log_info(string.format("Kalkis noktasinda kararlilik saglandi (Mesafe: %.2fm, Irtifa: %.2fm). INIS durumuna geciliyor.",
+                        horiz_dist, rel_alt))
                     change_state(STATE_INIS)
                     return update, UPDATE_RATE_MS
                 end
@@ -1146,6 +1247,12 @@ if _TEST_ENV then
         get_goal_record = function() return goal_record end,
         get_accepted_messages = function() return accepted_messages end,
         get_retired_sessions = function() return retired_sessions end,
+        get_takeoff_return_point_ned = function() return takeoff_return_point_ned end,
+        set_takeoff_return_point_ned = function(pt) takeoff_return_point_ned = pt end,
+        get_BASLANGIC_KONUMU = function() return BASLANGIC_KONUMU end,
+        set_BASLANGIC_KONUMU = function(pt) BASLANGIC_KONUMU = pt end,
+        get_hazirlik_verified = function() return hazirlik_verified end,
+        set_hazirlik_verified = function(v) hazirlik_verified = v end,
     }
 end
 

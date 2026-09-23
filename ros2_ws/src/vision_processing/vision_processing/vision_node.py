@@ -3,6 +3,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
+from std_msgs.msg import Bool
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseStamped
 from vision_interfaces.msg import Detection, DetectionArray
@@ -130,6 +131,10 @@ class VisionNode(Node):
         
         # Telemetry Time Sync
         self.declare_parameter('pose_age_tolerance_s', 0.2)
+
+        # Gating Config
+        self.declare_parameter('enable_gating', False)
+        self.declare_parameter('enable_topic', '/vision/enable')
         
         # Fetch generic config
         model_path = self.get_parameter('model_path').value
@@ -165,6 +170,11 @@ class VisionNode(Node):
         self.gnd_z = self.get_parameter('ground_plane_z').value
         
         self.pose_age_tol = self.get_parameter('pose_age_tolerance_s').value
+        
+        # Gating Status
+        self.enable_gating = bool(self.get_parameter('enable_gating').value)
+        enable_topic = self.get_parameter('enable_topic').value
+        self.vision_enabled = not self.enable_gating
         
         # Safe Refactored Validators
         self.validator = VisionConfigValidator(
@@ -205,12 +215,25 @@ class VisionNode(Node):
 
         self.pub_detections = self.create_publisher(DetectionArray, '/vision/detections', 10)
         
+        self.sub_enable = self.create_subscription(
+            Bool, enable_topic, self.enable_callback, 10
+        )
+        
         if self.pub_debug:
             self.pub_debug_img = self.create_publisher(Image, '/vision/debug_image', 1)
 
         self.timer = self.create_timer(1.0 / self.rate_hz, self.inference_loop)
 
-        self.get_logger().info("[VISION] Node configured and ready.")
+        self.get_logger().info(f"[VISION] Node configured and ready (Gating: {self.enable_gating}, Active: {self.vision_enabled}).")
+
+    def enable_callback(self, msg: Bool):
+        new_state = bool(msg.data)
+        if new_state != self.vision_enabled:
+            self.vision_enabled = new_state
+            if self.vision_enabled:
+                self.get_logger().info("[VISION] Vision enabled (warm standby -> active inference).")
+            else:
+                self.get_logger().info("[VISION] Vision disabled (inference paused / power save).")
 
     def image_callback(self, msg: Image):
         self.latest_frame = msg
@@ -221,6 +244,9 @@ class VisionNode(Node):
         self.latest_pose_ts = time.time()
 
     def inference_loop(self):
+        if not self.vision_enabled:
+            return
+            
         cv_image = None
         now = time.time()
         
