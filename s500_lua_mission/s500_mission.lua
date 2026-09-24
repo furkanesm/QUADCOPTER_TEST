@@ -187,6 +187,8 @@ local arm_request_time_ms   = 0
 local kalkis_started        = false    -- Eski kalkış bayrağı (uyumluluk için korunuyor)
 local kalkis_3d_steered     = false    -- Eski yönlendirme bayrağı (uyumluluk için korunuyor)
 local dikey_started         = false    -- Faz 1: Dikey tırmanış başlatıldı bayrağı
+local dikey_first_target_logged = false -- DEBUG: İlk set_target_pos_NED loglandı mı
+local debug_tkoff_last_ms   = 0        -- DEBUG: 1 Hz takeoff log zamanı
 local ileri_started         = false    -- Faz 2: İleri intikal başlatıldı bayrağı
 local kalkis_hedef_kuzey    = 0.0
 local kalkis_hedef_dogu     = 0.0
@@ -887,6 +889,7 @@ local function update()
                 HEDEF_IRTIFA_M, BASLANGIC_KONUMU.kuzey, BASLANGIC_KONUMU.dogu, dikey_hedef_z))
             local takeoff_ok = vehicle:start_takeoff(HEDEF_IRTIFA_M)
             log_info(string.format("start_takeoff(%.1fm) cagirildi, donus degeri: %s", HEDEF_IRTIFA_M, tostring(takeoff_ok)))
+            log_info(string.format("DEBUG: start_takeoff hemen sonrasi vehicle:get_mode() = %s", tostring(vehicle and vehicle:get_mode())))
             if not takeoff_ok then
                 log_error("start_takeoff komutu reddedildi! Failsafe INIS durumuna geciliyor.")
                 change_state(STATE_INIS)
@@ -895,14 +898,26 @@ local function update()
             dikey_started = true
         end
 
+        -- DEBUG: start_takeoff sonrasi ilk 12 saniye boyunca 1 Hz irtifa ve throttle loglama
+        local elapsed_dikey_ms = now_ms - state_entry_time_ms
+        if elapsed_dikey_ms <= 12000 and (now_ms - debug_tkoff_last_ms) >= 1000 then
+            debug_tkoff_last_ms = now_ms
+            local mode_now = vehicle and vehicle:get_mode() or -1
+            local home_pos = (ahrs and ahrs.get_relative_position_NED_home and ahrs:get_relative_position_NED_home()) or (ahrs and ahrs:get_relative_position_NED_origin())
+            local home_z = home_pos and home_pos:z() or 999.0
+            local thr = (motors and motors.get_throttle and motors:get_throttle()) or -1.0
+            local spool = (motors and motors.get_spool_state and motors:get_spool_state()) or -1
+            log_info(string.format("DEBUG_TKOFF: t=%.1fs mode=%s alt_z=%.3fm thr=%.3f spool=%s",
+                elapsed_dikey_ms / 1000.0, tostring(mode_now), home_z, thr, tostring(spool)))
+        end
+
         local cur_pos = ahrs:get_relative_position_NED_origin()
         local cur_vel = ahrs:get_velocity_NED()
         if cur_pos and cur_vel then
             local rel_alt = BASLANGIC_KONUMU.z - cur_pos:z()
             local vz_up   = -cur_vel:z()
 
-            -- Tırmanış boyunca aracı dikey eksende tut
-            vehicle:set_target_pos_NED(dikey_vec, true, math.deg(ILERI_YAW), false, 0.0, false, false)
+            -- vehicle:set_target_pos_NED tırmanış sırasında çağrılmaz; start_takeoff dikey tırmanışı kendisi yürütür
 
             local dx = cur_pos:x() - BASLANGIC_KONUMU.kuzey
             local dy = cur_pos:y() - BASLANGIC_KONUMU.dogu
