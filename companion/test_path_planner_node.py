@@ -649,6 +649,7 @@ def test_phase_b_b_failed_plan_retries_3_times_and_locks():
     with patch('time.monotonic') as mocked_time:
         for i in range(10):
             mocked_time.return_value = base_t + float(i)*1.5  # 1.5 saniye aralıklarla
+            pose.header.stamp = node.get_clock().now().to_msg()
             node.vehicle_pose_cb(pose)
             
     assert c["count"] == 3, f"Count should be 3, was {c['count']}"
@@ -679,6 +680,126 @@ def test_phase_b_c_new_obstacle_cut_unlocks():
     assert node.return_plan_attempts == 0
     print("✓ Test 20: FAZ B (c) Yeni engel dönüş rotasını kestiğinde kilit açılır.")
 
+def test_phase_c_horizon_33m_coverage():
+    """FAZ C (a, b): 33m uzaklıklar grid içinde (None değil) ve plan başarılı (engelden kaçar)."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9994
+    node.lua_fsm_state = "HEDEF_BEKLE"
+    # Faz C testlerinde sınırları dinamik olarak 140x140 (offset 70) yapalım 
+    node.arena_w = 140.0
+    node.arena_h = 140.0
+    node.offset_x = 70.0
+    node.offset_y = 70.0
+    
+    # Kalkış referansı 0,0
+    ref = PoseStamped()
+    ref.header.stamp = node.get_clock().now().to_msg()
+    ref.header.frame_id = "ekf_origin_ned:session_9994"
+    node.takeoff_return_cb(ref)
+    
+    # 33m yönlerimiz
+    targets = [(33.0, 0.0), (0.0, 33.0), (23.3, 23.3), (-33.0, 0.0)]
+    
+    for tx, ty in targets:
+        assert node.ned_to_grid(tx, ty) is not None, f"({tx}, {ty}) grid dışında (None) dönüyor!"
+        node.vehicle_pos_ned = (tx, ty)
+        
+        ok, msg = node.plan_return_path((tx, ty))
+        assert ok is True, f"({tx}, {ty}) için plan başarısız: {msg}"
+    
+    # Engelli test (33,0 -> 0,0 arasına duvar)
+    node.obstacles_ned = [(15.0, y) for y in np.arange(-5, 6, 0.5)]
+    node.vehicle_pos_ned = (33.0, 0.0)
+    ok, msg = node.plan_return_path((33.0, 0.0))
+    assert ok is True
+    
+    # Rota duvardan geçmiyor olmalı
+    for px, py in node.return_path_ned:
+        # Duvar x=15 civarında
+        if 14.0 < px < 16.0:
+            assert py > 5.0 or py < -5.0, "Rota engelin içinden geçti!"
+            
+    print("✓ Test 21: FAZ C (a, b) 33m yatay menzil kapsama ve engelden kaçınma doğrulandı.")
+
+def test_phase_c_out_of_bounds_retries():
+    """FAZ C (c): (200,0) -> RETURN_START_OUT_OF_BOUNDS -> max 3 deneme."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9995
+    node.lua_fsm_state = "HEDEF_BEKLE"
+    # Faz C testlerinde sınırları dinamik olarak 140x140 (offset 70) yapalım 
+    node.arena_w = 140.0
+    node.arena_h = 140.0
+    node.offset_x = 70.0
+    node.offset_y = 70.0
+
+    orig_plan = node.plan_return_path
+    c = {"count": 0}
+    def mock_plan(*args, **kwargs):
+        c["count"] += 1
+        return orig_plan(*args, **kwargs)
+    node.plan_return_path = mock_plan
+    
+    ref = PoseStamped()
+    ref.header.stamp = node.get_clock().now().to_msg()
+    ref.header.frame_id = "ekf_origin_ned:session_9995"
+    node.takeoff_return_cb(ref)
+    node.goal_pos_ned = (5.0, 5.0)
+
+    # Dron grid dışında -> OUT_OF_BOUNDS
+    pose = PoseStamped()
+    pose.header.stamp = node.get_clock().now().to_msg()
+    pose.header.frame_id = "ekf_origin_ned:session_9995"
+    pose.pose.position.x = 200.0
+    pose.pose.position.y = 0.0
+    
+    base_t = time.monotonic()
+    with patch('time.monotonic') as mocked_time:
+        for i in range(5):
+            mocked_time.return_value = base_t + float(i)*1.5
+            node.vehicle_pose_cb(pose)
+            
+    assert c["count"] == 3, f"Deneme sayısı 3 olmalıydı, {c['count']} oldu."
+    assert node.return_path_locked is True, "3 başarısızlıktan sonra kilitlenmeliydi."
+    print("✓ Test 22: FAZ C (c) Grid dışı konum 3 deneme sonrası kilitleniyor.")
+
+def test_phase_c_blocked_goal_timeout_limit():
+    """FAZ C (d): 140x140 arena, hedef tamamen kapalı. A* plan_return_path'i 1.0 saniyenin altında dönmeli."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9996
+    
+    # 140x140 yap
+    node.arena_w = 140.0
+    node.arena_h = 140.0
+    node.offset_x = 70.0
+    node.offset_y = 70.0
+    
+    ref = PoseStamped()
+    ref.header.stamp = node.get_clock().now().to_msg()
+    ref.header.frame_id = "ekf_origin_ned:session_9996"
+    node.takeoff_return_cb(ref)
+    
+    # Hedef 0,0 (Takeoff point)
+    
+    # Hedefin etrafını dev bir çemberle kapatalım (tamamen izole olsun)
+    node.obstacles_ned = []
+    for dx_val in np.arange(-15.0, 15.5, 0.5):
+        for dy_val in np.arange(-15.0, 15.5, 0.5):
+            if abs(dx_val) == 15.0 or abs(dy_val) == 15.0:
+                node.obstacles_ned.append((float(dx_val), float(dy_val)))
+                
+    # Drone (ret_start) dışarıda bir yerde 33m ilerde
+    t0 = time.monotonic()
+    ok, msg = node.plan_return_path((33.0, 33.0))
+    t1 = time.monotonic()
+    
+    dt = t1 - t0
+    assert not ok, "Kapalı hedefe plan yapılamamalıydı!"
+    assert dt < 1.0, f"Planlama {dt:.2f} saniye sürdü! Hedef 1.0 sn altıydı."
+    print(f"✓ Test 23: FAZ C (d) Tam kapalı alanda 1.0sn erken çıkış limit altına indi ({dt:.3f} sn).")
+
 def run_all_tests():
     print("\n" + "="*75)
     print("S500 ROTA PLANLAYICI & GRIDPLANNER BİRİM TESTLERİ")
@@ -704,6 +825,9 @@ def run_all_tests():
         test_phase_b_a_successful_plan_locks_after_1_try,
         test_phase_b_b_failed_plan_retries_3_times_and_locks,
         test_phase_b_c_new_obstacle_cut_unlocks,
+        test_phase_c_horizon_33m_coverage,
+        test_phase_c_out_of_bounds_retries,
+        test_phase_c_blocked_goal_timeout_limit,
     ]
     passed = 0
     failed = 0
