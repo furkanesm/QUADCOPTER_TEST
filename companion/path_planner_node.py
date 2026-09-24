@@ -100,6 +100,7 @@ class PathPlannerNode(Node):
         self.return_path_ned: List[Tuple[float, float]] = []
         self.lua_fsm_state: str = "UNKNOWN"
         self.route_ready_called: bool = False
+        self.return_path_locked: bool = False
 
         # GridPlanner örneği
         self.planner = GridPlanner(
@@ -193,6 +194,7 @@ class PathPlannerNode(Node):
         self.return_path_ned = []
         self.lua_fsm_state = "UNKNOWN"
         self.route_ready_called = False
+        self.return_path_locked = False
         self.takeoff_return_pos_ned = None
         self.takeoff_return_pos_ned_3d = None
         self.vehicle_pos_ned = None
@@ -489,6 +491,7 @@ class PathPlannerNode(Node):
         """Dönüş rotasını geçersiz kılar, adaptördeki rotayı temizler ve Status 4'ü engeller."""
         self.return_path_ned = []
         self.route_ready_called = False
+        self.return_path_locked = False
 
         # Adaptördeki return_path'i temizlemek için aktif oturum ekiyle boş Path yayınla
         empty_path = Path()
@@ -625,12 +628,16 @@ class PathPlannerNode(Node):
         vx, vy = self.vehicle_pos_ned
 
         # 5. HAZIR ROTA KONTROLÜ: Önceden yayınlanmış hazır dönüş rotası varsa doğrudan tetikle
-        if len(self.return_path_ned) >= 2:
+        if self.return_path_locked and len(self.return_path_ned) >= 2:
             if self.auto_route_ready and not self.route_ready_called:
                 self.trigger_route_ready_call()
             return
+            
+        if self.return_path_locked:
+            return
 
         # Hazır rota yoksa: Doğrulanmış taze araç konumundan fiziksel kalkış referansına planla ve yayınla
+        self.return_path_locked = True
         ok, msg = self.plan_return_path((vx, vy))
         if ok:
             if self.auto_route_ready and not self.route_ready_called and len(self.return_path_ned) >= 2:

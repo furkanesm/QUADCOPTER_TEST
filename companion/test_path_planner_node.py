@@ -576,6 +576,57 @@ def test_physical_obstacle_retained_after_start_goal_inflation_relaxation():
     assert grid[15, 14] == GridPlanner.OBSTACLE
     print("✓ Test 17: Start/goal çevresi gevşetmesinde fiziksel engellerin korunduğu başarıyla doğrulandı.")
 
+def test_single_return_planning_lock_in_hedef_bekle():
+    """18. HEDEF_BEKLE durumundayken return_path bir kez hesaplanmalı, sonraki çağrılarda A* KİLİTLENMELİDİR."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9999
+    node.lua_fsm_state = "HEDEF_BEKLE"
+    
+    # Mock return path planning to count calls
+    original_plan_return_path = node.plan_return_path
+    call_counts = {"count": 0}
+    
+    def mock_plan(*args, **kwargs):
+        call_counts["count"] += 1
+        return original_plan_return_path(*args, **kwargs)
+        
+    node.plan_return_path = mock_plan
+    
+    node.cli_route_ready.service_is_ready = MagicMock(return_value=True)
+    node.cli_route_ready.call_async = MagicMock()
+
+    # Set references
+    ref_msg = PoseStamped()
+    ref_msg.header.stamp = node.get_clock().now().to_msg()
+    ref_msg.header.frame_id = "ekf_origin_ned:session_9999"
+    ref_msg.pose.position.x = 0.0
+    ref_msg.pose.position.y = 0.0
+    ref_msg.pose.position.z = 0.0
+    node.takeoff_return_cb(ref_msg)
+    
+    node.goal_pos_ned = (5.0, 5.0)
+
+    # First vehicle pose callback (Fresh)
+    pose = PoseStamped()
+    pose.header.stamp = node.get_clock().now().to_msg()
+    pose.header.frame_id = "ekf_origin_ned:session_9999"
+    pose.pose.position.x = 2.0
+    pose.pose.position.y = 2.0
+    pose.pose.position.z = -33.0
+    
+    # 1st call
+    node.vehicle_pose_cb(pose)
+    assert call_counts["count"] == 1
+    assert node.return_path_locked is True
+
+    # 2nd call (Same pose or slightly different, simulating hovering)
+    pose.pose.position.x = 2.1
+    node.vehicle_pose_cb(pose)
+    
+    # Still 1 call because it's locked!
+    assert call_counts["count"] == 1, "plan_return_path should NOT be called again after locking!"
+    print("✓ Test 18: HEDEF_BEKLE'de A*'ın birden fazla çalıştırılmasını engelleyen return_path_locked kuralı başarıyla doğrulandı.")
 
 def run_all_tests():
     print("\n" + "="*75)
@@ -599,6 +650,7 @@ def run_all_tests():
         test_status3_never_sent_under_any_condition,
         test_return_path_fails_when_takeoff_goal_blocked_by_physical_obstacles,
         test_physical_obstacle_retained_after_start_goal_inflation_relaxation,
+        test_single_return_planning_lock_in_hedef_bekle,
     ]
     passed = 0
     failed = 0
