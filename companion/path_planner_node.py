@@ -195,6 +195,8 @@ class PathPlannerNode(Node):
         self.lua_fsm_state = "UNKNOWN"
         self.route_ready_called = False
         self.return_path_locked = False
+        self.return_plan_attempts = 0
+        self.last_attempt_mono = 0.0
         self.takeoff_return_pos_ned = None
         self.takeoff_return_pos_ned_3d = None
         self.vehicle_pos_ned = None
@@ -451,6 +453,17 @@ class PathPlannerNode(Node):
                     new_info = True
                     self.get_logger().info(f"[PLANNER] Yeni engel eklendi: NED [{x_ned:.2f}, {y_ned:.2f}]")
                     self.pub_status.publish(String(data=f"OBSTACLE_ADDED:{x_ned:.2f}:{y_ned:.2f}"))
+                    
+                    if self.return_path_locked and len(self.return_path_ned) >= 2:
+                        cut = False
+                        thresh = self.veh_w + self.safety_m
+                        for px, py in self.return_path_ned:
+                            if math.hypot(px - x_ned, py - y_ned) < thresh:
+                                cut = True
+                                break
+                        if cut:
+                            self.get_logger().warn(f"[PLANNER] Yeni engel ({x_ned:.2f}, {y_ned:.2f}) dönüş rotasını kesti! Kilit kaldırılıyor.")
+                            self.invalidate_return_path("OBSTACLE_CUTS_RETURN_PATH", reset_attempts=True)
 
         # Yeni anlamlı konum bilgisi alındıysa ve hem start hem goal varsa rota planla
         if new_info and self.start_pos_ned is not None and self.goal_pos_ned is not None:
@@ -487,11 +500,13 @@ class PathPlannerNode(Node):
                     return False
         return True
 
-    def invalidate_return_path(self, reason: str):
+    def invalidate_return_path(self, reason: str, reset_attempts: bool = False):
         """Dönüş rotasını geçersiz kılar, adaptördeki rotayı temizler ve Status 4'ü engeller."""
         self.return_path_ned = []
         self.route_ready_called = False
         self.return_path_locked = False
+        if reset_attempts:
+            self.return_plan_attempts = 0
 
         # Adaptördeki return_path'i temizlemek için aktif oturum ekiyle boş Path yayınla
         empty_path = Path()
@@ -633,17 +648,27 @@ class PathPlannerNode(Node):
                 self.trigger_route_ready_call()
             return
             
-        if self.return_path_locked:
+        if self.return_plan_attempts >= 3:
+            return
+            
+        now = time.monotonic()
+        if now - self.last_attempt_mono < 1.0:
             return
 
         # Hazır rota yoksa: Doğrulanmış taze araç konumundan fiziksel kalkış referansına planla ve yayınla
-        self.return_path_locked = True
+        self.return_plan_attempts += 1
+        self.last_attempt_mono = now
         ok, msg = self.plan_return_path((vx, vy))
+        
         if ok:
+            self.return_path_locked = True
             if self.auto_route_ready and not self.route_ready_called and len(self.return_path_ned) >= 2:
                 self.trigger_route_ready_call()
         else:
             self.get_logger().warn(f"[PLANNER] Dönüş rotası planlanamadı: {msg}")
+            if self.return_plan_attempts >= 3:
+                self.return_path_locked = True
+                self.pub_status.publish(String(data="RETURN_PLANNING_FAILED_FINAL"))
 
     # --------------------------------------------------------------------------
     # Rota Planlama Çekirdeği
@@ -676,14 +701,12 @@ class PathPlannerNode(Node):
             err = "PLANNING_FAILED:START_OUT_OF_BOUNDS"
             self.get_logger().warn(f"[PLANNER] {err}")
             self.pub_status.publish(String(data=err))
-            self.invalidate_return_path("FORWARD_START_OUT_OF_BOUNDS")
             return False, err
 
         if goal_grid is None:
             err = "PLANNING_FAILED:GOAL_OUT_OF_BOUNDS"
             self.get_logger().warn(f"[PLANNER] {err}")
             self.pub_status.publish(String(data=err))
-            self.invalidate_return_path("FORWARD_GOAL_OUT_OF_BOUNDS")
             return False, err
 
         # A* Arama çalıştır
@@ -694,7 +717,6 @@ class PathPlannerNode(Node):
             err = f"PLANNING_FAILED:{status}"
             self.get_logger().warn(f"[PLANNER] Rota bulunamadi: {err}")
             self.pub_status.publish(String(data=err))
-            self.invalidate_return_path(f"FORWARD_FAILED_{status}")
             return False, err
 
         # Izgara yolunu metrik NED koordinatlarına dönüştür
@@ -710,7 +732,6 @@ class PathPlannerNode(Node):
             err = "PLANNING_FAILED:SEGMENT_COLLISION"
             self.get_logger().warn(f"[PLANNER] Gidiş segmenti engelle kesişti: {err}")
             self.pub_status.publish(String(data=err))
-            self.invalidate_return_path("FORWARD_SEGMENT_COLLISION")
             return False, err
 
         self.last_path_ned = metric_path
