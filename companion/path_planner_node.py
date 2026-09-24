@@ -49,13 +49,16 @@ class PathPlannerNode(Node):
         # ----------------------------------------------------------------------
         # Parametre Tanımları
         # ----------------------------------------------------------------------
-        self.declare_parameter('arena_width', 20.0)        # Metre (X ekseni genişliği)
-        self.declare_parameter('arena_height', 20.0)       # Metre (Y ekseni genişliği)
+        # FAZ B GÜNCELLEMESİ: Drone 33 m uzağa uçtuğu için 20x20'lik Grid (10m ofset) yetersizdi. 
+        # Yeni büyüklük: 33 m gidiş + görüş açısı toleransı (~31m) + pay ~ 70m uç.
+        # Toplam arena 140x140m (NED x,y = [-70, +70]). (ROS parametreleriyle ezilebilir)
+        self.declare_parameter('arena_width', 140.0)        # Metre (X ekseni genişliği: 140m)
+        self.declare_parameter('arena_height', 140.0)       # Metre (Y ekseni genişliği: 140m)
         self.declare_parameter('grid_resolution', 0.5)     # Metre / hücre
         self.declare_parameter('vehicle_width', 0.6)       # S500 gövde genişliği (m)
         self.declare_parameter('safety_margin', 0.4)       # Güvenlik marjı (m)
-        self.declare_parameter('origin_offset_x', 10.0)    # NED X -> Grid sütun ofseti (m)
-        self.declare_parameter('origin_offset_y', 10.0)    # NED Y -> Grid satır ofseti (m)
+        self.declare_parameter('origin_offset_x', 70.0)    # NED X -> Grid sütun ofseti (m)
+        self.declare_parameter('origin_offset_y', 70.0)    # NED Y -> Grid satır ofseti (m)
         self.declare_parameter('strict_boundary_walls', False)  # Varsayılan: Açık hava uçuş sahası (kenarlar sahte duvar sayılmaz)
         self.declare_parameter('auto_trigger_route_ready', True)
         self.declare_parameter('start_classes', ['start'])
@@ -100,6 +103,7 @@ class PathPlannerNode(Node):
         self.return_path_ned: List[Tuple[float, float]] = []
         self.lua_fsm_state: str = "UNKNOWN"
         self.route_ready_called: bool = False
+        self.return_path_locked: bool = False
 
         # GridPlanner örneği
         self.planner = GridPlanner(
@@ -193,12 +197,21 @@ class PathPlannerNode(Node):
         self.return_path_ned = []
         self.lua_fsm_state = "UNKNOWN"
         self.route_ready_called = False
+        self.return_path_locked = False
+        self.return_plan_attempts = 0
+        self.last_attempt_mono = 0.0
         self.takeoff_return_pos_ned = None
         self.takeoff_return_pos_ned_3d = None
         self.vehicle_pos_ned = None
         self.vehicle_pos_ned_3d = None
         self.last_vehicle_pos_time = None
         self.last_vehicle_pos_mono = None
+        self.diagnostic_logged = False
+        self.warned_out_of_bounds_pts = set()
+        
+        # Teşhis ve uyarı kilitleri
+        self.diagnostic_logged = False
+        self.warned_out_of_bounds_pts = set()
 
     def takeoff_return_cb(self, msg: PoseStamped):
         """Yerde kilitlenen fiziksel kalkış/dönüş referans noktasını kaydeder."""
@@ -358,6 +371,12 @@ class PathPlannerNode(Node):
 
         if 0 <= gx < grid_w and 0 <= gy < grid_h:
             return (gx, gy)
+            
+        pt_key = (round(x_ned, 1), round(y_ned, 1))
+        if pt_key not in self.warned_out_of_bounds_pts:
+            self.get_logger().warn(f"[PLANNER] NED coordinati sınır disinda kaldi: {x_ned:.2f}, {y_ned:.2f} (Hesaplanilan hucre: {gx}, {gy}, Max hucre: {grid_w-1}, {grid_h-1})")
+            self.warned_out_of_bounds_pts.add(pt_key)
+        
         return None
 
     def grid_to_ned(self, gx: int, gy: int) -> Tuple[float, float]:
@@ -449,6 +468,17 @@ class PathPlannerNode(Node):
                     new_info = True
                     self.get_logger().info(f"[PLANNER] Yeni engel eklendi: NED [{x_ned:.2f}, {y_ned:.2f}]")
                     self.pub_status.publish(String(data=f"OBSTACLE_ADDED:{x_ned:.2f}:{y_ned:.2f}"))
+                    
+                    if self.return_path_locked and len(self.return_path_ned) >= 2:
+                        cut = False
+                        thresh = self.veh_w + self.safety_m
+                        for px, py in self.return_path_ned:
+                            if math.hypot(px - x_ned, py - y_ned) < thresh:
+                                cut = True
+                                break
+                        if cut:
+                            self.get_logger().warn(f"[PLANNER] Yeni engel ({x_ned:.2f}, {y_ned:.2f}) dönüş rotasını kesti! Kilit kaldırılıyor.")
+                            self.invalidate_return_path("OBSTACLE_CUTS_RETURN_PATH", reset_attempts=True)
 
         # Yeni anlamlı konum bilgisi alındıysa ve hem start hem goal varsa rota planla
         if new_info and self.start_pos_ned is not None and self.goal_pos_ned is not None:
@@ -485,10 +515,13 @@ class PathPlannerNode(Node):
                     return False
         return True
 
-    def invalidate_return_path(self, reason: str):
+    def invalidate_return_path(self, reason: str, reset_attempts: bool = False):
         """Dönüş rotasını geçersiz kılar, adaptördeki rotayı temizler ve Status 4'ü engeller."""
         self.return_path_ned = []
         self.route_ready_called = False
+        self.return_path_locked = False
+        if reset_attempts:
+            self.return_plan_attempts = 0
 
         # Adaptördeki return_path'i temizlemek için aktif oturum ekiyle boş Path yayınla
         empty_path = Path()
@@ -511,6 +544,7 @@ class PathPlannerNode(Node):
         Tüm segmentleri (ilk ve son bağlantı dahil) engel ve sınır denetiminden geçirir.
         Tek noktalı yolları en az 2 waypoint sözleşmesine uyarlar.
         """
+        t_start = time.monotonic()
         if self.takeoff_return_pos_ned is None or self.takeoff_return_pos_ned_3d is None:
             err = "MISSING_TAKEOFF_RETURN_REF"
             self.invalidate_return_path(err)
@@ -536,11 +570,15 @@ class PathPlannerNode(Node):
         if start_grid is None:
             err = "RETURN_START_OUT_OF_BOUNDS"
             self.invalidate_return_path(err)
+            duration_ms = (time.monotonic() - t_start) * 1000.0
+            self.get_logger().info(f"plan süresi: {duration_ms:.2f} ms")
             return False, err
 
         if goal_grid is None:
             err = "RETURN_GOAL_OUT_OF_BOUNDS"
             self.invalidate_return_path(err)
+            duration_ms = (time.monotonic() - t_start) * 1000.0
+            self.get_logger().info(f"plan süresi: {duration_ms:.2f} ms")
             return False, err
 
         resp, path_grid_ret, work_grid_ret = self.planner.plan_path(grid, start_grid, goal_grid)
@@ -549,6 +587,8 @@ class PathPlannerNode(Node):
         if status != "SUCCESS" or not path_grid_ret:
             err = f"NO_RETURN_PATH:{status}"
             self.invalidate_return_path(err)
+            duration_ms = (time.monotonic() - t_start) * 1000.0
+            self.get_logger().info(f"plan süresi: {duration_ms:.2f} ms")
             return False, err
 
         # Tek noktalı yolun iki uç atamasıyla bozulmasını önle (en az 2 waypoint sözleşmesi)
@@ -565,8 +605,9 @@ class PathPlannerNode(Node):
             self.invalidate_return_path(err)
             return False, err
 
-        # Doğrudan kullanıma aç ve yayınla
         self._publish_return_path(metric_ret)
+        duration_ms = (time.monotonic() - t_start) * 1000.0
+        self.get_logger().info(f"plan süresi: {duration_ms:.2f} ms")
         return True, f"RETURN_PLANNING_SUCCESS:waypoints_{len(metric_ret)}"
 
     def _publish_return_path(self, metric_ret: List[Tuple[float, float]]):
@@ -623,20 +664,60 @@ class PathPlannerNode(Node):
             return
 
         vx, vy = self.vehicle_pos_ned
+        
+        # Sadece TEK BİR KEZ teşhis logu al:
+        if not self.diagnostic_logged:
+            self.diagnostic_logged = True
+            min_x_bd = -self.offset_x
+            max_x_bd = self.arena_w - self.offset_x
+            min_y_bd = -self.offset_y
+            max_y_bd = self.arena_h - self.offset_y
+            
+            obs_x = [ox for ox, oy in self.obstacles_ned]
+            obs_y = [oy for ox, oy in self.obstacles_ned]
+            min_ox, max_ox = round(min(obs_x), 2) if obs_x else 0.0, round(max(obs_x), 2) if obs_x else 0.0
+            min_oy, max_oy = round(min(obs_y), 2) if obs_y else 0.0, round(max(obs_y), 2) if obs_y else 0.0
+            
+            veh_valid = True if self.ned_to_grid(vx, vy) else False
+            tkf_valid = True if self.ned_to_grid(*self.takeoff_return_pos_ned) else False
+            
+            self.get_logger().info(
+                f"\n--- [PLANNER TEŞHİS LOGU (İLK DENEME)] ---\n"
+                f"Araç Konumu (NED): ({vx:.2f}, {vy:.2f}) -> Grid'de mi: {veh_valid}\n"
+                f"Kalkış Hedefi (NED): ({self.takeoff_return_pos_ned[0]:.2f}, {self.takeoff_return_pos_ned[1]:.2f}) -> Grid'de mi: {tkf_valid}\n"
+                f"Start/Goal (NED): {self.start_pos_ned} / {self.goal_pos_ned}\n"
+                f"Engel Sayısı: {len(self.obstacles_ned)}, Engel Min/Max X: [{min_ox}, {max_ox}], Y: [{min_oy}, {max_oy}]\n"
+                f"Grid Sınırları: X Eksen [{min_x_bd:.2f}, {max_x_bd:.2f}], Y Eksen [{min_y_bd:.2f}, {max_y_bd:.2f}]\n"
+                f"--------------------------------------------\n"
+            )
 
         # 5. HAZIR ROTA KONTROLÜ: Önceden yayınlanmış hazır dönüş rotası varsa doğrudan tetikle
-        if len(self.return_path_ned) >= 2:
+        if self.return_path_locked and len(self.return_path_ned) >= 2:
             if self.auto_route_ready and not self.route_ready_called:
                 self.trigger_route_ready_call()
             return
+            
+        if self.return_plan_attempts >= 3:
+            return
+            
+        now = time.monotonic()
+        if now - self.last_attempt_mono < 1.0:
+            return
 
         # Hazır rota yoksa: Doğrulanmış taze araç konumundan fiziksel kalkış referansına planla ve yayınla
+        self.return_plan_attempts += 1
+        self.last_attempt_mono = now
         ok, msg = self.plan_return_path((vx, vy))
+        
         if ok:
+            self.return_path_locked = True
             if self.auto_route_ready and not self.route_ready_called and len(self.return_path_ned) >= 2:
                 self.trigger_route_ready_call()
         else:
-            self.get_logger().warn(f"[PLANNER] Dönüş rotası planlanamadı: {msg}")
+            self.get_logger().warn(f"[PLANNER] Dönüş rotası planlanamadı: {msg} (Deneme: {self.return_plan_attempts}/3)")
+            if self.return_plan_attempts >= 3:
+                self.return_path_locked = True
+                self.pub_status.publish(String(data="RETURN_PLANNING_FAILED_FINAL"))
 
     # --------------------------------------------------------------------------
     # Rota Planlama Çekirdeği
@@ -669,14 +750,12 @@ class PathPlannerNode(Node):
             err = "PLANNING_FAILED:START_OUT_OF_BOUNDS"
             self.get_logger().warn(f"[PLANNER] {err}")
             self.pub_status.publish(String(data=err))
-            self.invalidate_return_path("FORWARD_START_OUT_OF_BOUNDS")
             return False, err
 
         if goal_grid is None:
             err = "PLANNING_FAILED:GOAL_OUT_OF_BOUNDS"
             self.get_logger().warn(f"[PLANNER] {err}")
             self.pub_status.publish(String(data=err))
-            self.invalidate_return_path("FORWARD_GOAL_OUT_OF_BOUNDS")
             return False, err
 
         # A* Arama çalıştır
@@ -687,7 +766,6 @@ class PathPlannerNode(Node):
             err = f"PLANNING_FAILED:{status}"
             self.get_logger().warn(f"[PLANNER] Rota bulunamadi: {err}")
             self.pub_status.publish(String(data=err))
-            self.invalidate_return_path(f"FORWARD_FAILED_{status}")
             return False, err
 
         # Izgara yolunu metrik NED koordinatlarına dönüştür
@@ -703,7 +781,6 @@ class PathPlannerNode(Node):
             err = "PLANNING_FAILED:SEGMENT_COLLISION"
             self.get_logger().warn(f"[PLANNER] Gidiş segmenti engelle kesişti: {err}")
             self.pub_status.publish(String(data=err))
-            self.invalidate_return_path("FORWARD_SEGMENT_COLLISION")
             return False, err
 
         self.last_path_ned = metric_path

@@ -52,6 +52,8 @@ class GridPlanner:
         if grid[goal[1], goal[0]] == self.OBSTACLE:
             return self._build_resp("GOAL_BLOCKED_PHYSICALLY")
             
+
+
         # Calculate BOTTLENECK SHORTEST PATH (maximin path width) for this specific query
         # to ensure configured dynamic inflation does not block narrow topological passages. 
         free_mask = (grid != self.OBSTACLE).astype(np.uint8)
@@ -62,32 +64,22 @@ class GridPlanner:
         # Crop back to original dimensions
         dt_for_bottleneck = dt_padded[1:h+1, 1:w+1]
         
-        visited_bn = np.zeros((h, w), dtype=bool)
-        pq = []
-        start_c = float(dt_for_bottleneck[start[1], start[0]])
-        heapq.heappush(pq, (-start_c, start[0], start[1]))
+        max_t = min(dt_for_bottleneck[start[1], start[0]], dt_for_bottleneck[goal[1], goal[0]])
+        t_cands = np.unique(dt_for_bottleneck[(dt_for_bottleneck > 0) & (dt_for_bottleneck <= max_t)])
         
         computed_bottleneck_B = 0.0
-        b_dirs = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]
-        
-        while pq:
-            neg_c, cx, cy = heapq.heappop(pq)
-            c = -neg_c
-            if visited_bn[cy, cx]:
-                continue
-            visited_bn[cy, cx] = True
-            
-            if (cx, cy) == goal:
-                computed_bottleneck_B = c
-                break
-                
-            for dx, dy in b_dirs:
-                nx, ny = cx + dx, cy + dy
-                if 0 <= nx < w and 0 <= ny < h:
-                    if not visited_bn[ny, nx] and grid[ny, nx] != self.OBSTACLE:
-                        edge_c = dt_for_bottleneck[ny, nx]
-                        path_c = min(c, edge_c)
-                        heapq.heappush(pq, (-path_c, nx, ny))
+        if len(t_cands) > 0:
+            low, high = 0, len(t_cands) - 1
+            while low <= high:
+                mid = (low + high) // 2
+                t = t_cands[mid]
+                mask = (dt_for_bottleneck >= t).astype(np.uint8)
+                num_labels, labels = cv2.connectedComponents(mask, connectivity=8)
+                if labels[start[1], start[0]] != 0 and labels[start[1], start[0]] == labels[goal[1], goal[0]]:
+                    computed_bottleneck_B = float(t)
+                    low = mid + 1
+                else:
+                    high = mid - 1
                         
         applied_inflation = self.inflation_cells
         if self.inflation_cells > 0 and computed_bottleneck_B > 0:
@@ -147,12 +139,31 @@ class GridPlanner:
         # We will carve a direct 1-pixel tunnel if needed? The user specified:
         # "H'yi ve S'yi HER ZAMAN serbest kabul et (maskeyi override et)"
         # So we just unblock the single pixels as explicitly requested.
-            
+
+        # A* search için bağlı bileşen (Connected Components) Erken Çıkış (Early Exit)
+        # Sadece A* ın değerlendireceği açık/kapalı yolları dikkate al
+        impassable = np.logical_or(work_grid == 1, grid == self.OBSTACLE).astype(np.uint8)
+        free_cells = 1 - impassable
+        # 4'lü komşuluk A* ile BİREBİR uyumludur. A* çapraz ilerleyebilmek için 
+        # HER İKİ ortogonal komşunun boş olmasını (strict diagonal) şart koştuğundan, 
+        # 4-connectivity zaten o ortogonal boşluklardan geçerek hedefe ulaşabilecektir.
+        # Bu yüzden 4-connectivity A*'dan ne daha katı ne daha gevşektir; BİREBİR eşittir.
+        num_labels, labels = cv2.connectedComponents(free_cells, connectivity=4)
+        label_start = labels[start[1], start[0]]
+        label_goal = labels[goal[1], goal[0]]
+        if label_start == 0 or label_goal == 0 or label_start != label_goal:
+            # Farklı bileşendeyse veya tamamen arka plan/duvar üzerinde ise kesin olarak imkansızdır.
+            return self._build_resp("NO_PATH", work_grid=work_grid, diagnostics=run_diagnostics)
+
         # A* search
-        open_set = {start}
         came_from = {}
         g_score = {start: 0}
         f_score = {start: self._heuristic(start, goal)}
+        
+        # Deterministik tie-breaker (Aynı f-score değerlerinde her iki iterasyonda da aynı komşunun işlenmesi için)
+        counter = 0
+        pq = []
+        heapq.heappush(pq, (f_score[start], counter, start))
         
         directions = [
             (0, -1, 1.0), (0, 1, 1.0), (-1, 0, 1.0), (1, 0, 1.0),
@@ -160,8 +171,16 @@ class GridPlanner:
         ]
         
         path = None
-        while open_set:
-            current = min(open_set, key=lambda x: f_score.get(x, float('inf')))
+        visited = set()
+        
+        while pq:
+            curr_f, _, current = heapq.heappop(pq)
+            
+            # Kapalı / Eskimiş düğüm (Closed Set / Lazy Deletion Bypass)
+            if current in visited:
+                continue
+            visited.add(current)
+            
             if current == goal:
                 path = []
                 while current in came_from:
@@ -171,7 +190,6 @@ class GridPlanner:
                 path.reverse()
                 break
                 
-            open_set.remove(current)
             for dx, dy, cost in directions:
                 nx, ny = current[0] + dx, current[1] + dy
                 neighbor = (nx, ny)
@@ -202,9 +220,11 @@ class GridPlanner:
                 if tentative_g_score < g_score.get(neighbor, float('inf')):
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + self._heuristic(neighbor, goal)
-                    if neighbor not in open_set:
-                        open_set.add(neighbor)
+                    fn = tentative_g_score + self._heuristic(neighbor, goal)
+                    f_score[neighbor] = fn
+                    
+                    counter += 1
+                    heapq.heappush(pq, (fn, counter, neighbor))
                         
         if path is None:
             return self._build_resp("NO_PATH", work_grid=work_grid, diagnostics=run_diagnostics)

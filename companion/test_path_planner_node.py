@@ -21,6 +21,7 @@ import math
 import traceback
 import numpy as np
 import pytest
+import time
 from unittest.mock import MagicMock, patch
 
 # companion dizinini path'e ekle
@@ -62,7 +63,7 @@ def test_gridplanner_diagonal_cut_prevention():
     # Yolun doğrudan (1,1) -> (2,2) adımını içermediğini doğrula
     path_tuples = list(zip(path[:-1], path[1:]))
     assert ((1, 1), (2, 2)) not in path_tuples, "Çapraz engel boşluğundan köşe kesilerek GEÇİLMEMELİDİR!"
-    print("✓ Test 1: GridPlanner çapraz köşe kesme engellemesi başarıyla doğrulandı.")
+    print("[OK] Test 1: GridPlanner çapraz köşe kesme engellemesi başarıyla doğrulandı.")
 
 
 def test_gridplanner_inflation_radius():
@@ -88,7 +89,7 @@ def test_gridplanner_inflation_radius():
 
     # Yeterince uzaktaki hücre serbest kalmalıdır
     assert work_grid[0, 0] == 0, "Uzak hücre serbest kalmalıdır"
-    print("✓ Test 2: GridPlanner morfolojik engel enflasyonu (cv2.dilate) başarıyla doğrulandı.")
+    print("[OK] Test 2: GridPlanner morfolojik engel enflasyonu (cv2.dilate) başarıyla doğrulandı.")
 
 
 def test_gridplanner_blocked_start_and_goal():
@@ -107,7 +108,7 @@ def test_gridplanner_blocked_start_and_goal():
     resp_g, path_g, _ = planner.plan_path(grid, (0, 0), (3, 3))
     assert resp_g["status"] == "GOAL_BLOCKED_PHYSICALLY"
     assert path_g is None
-    print("✓ Test 3: GridPlanner START_BLOCKED_PHYSICALLY ve GOAL_BLOCKED_PHYSICALLY koruması başarıyla doğrulandı.")
+    print("[OK] Test 3: GridPlanner START_BLOCKED_PHYSICALLY ve GOAL_BLOCKED_PHYSICALLY koruması başarıyla doğrulandı.")
 
 
 def test_gridplanner_out_of_bounds():
@@ -120,7 +121,7 @@ def test_gridplanner_out_of_bounds():
 
     resp_g, _, _ = planner.plan_path(grid, (0, 0), (5, 3))  # w=5 için max indis 4
     assert resp_g["status"] == "GOAL_OUT_OF_BOUNDS"
-    print("✓ Test 4: GridPlanner sınır dışı (out of bounds) denetimi başarıyla doğrulandı.")
+    print("[OK] Test 4: GridPlanner sınır dışı (out of bounds) denetimi başarıyla doğrulandı.")
 
 
 # ==============================================================================
@@ -188,7 +189,7 @@ def test_node_scenario_1_deterministic_obstacle_avoidance():
         # Güvenlik marjı ile engelin merkezine 0.5m'den yakın olmamalı
         assert dist_to_obs >= 0.5, f"Rota engele çok yakın ({dist_to_obs:.2f}m), çarpışma riski!"
 
-    print("✓ Test 5 (Senaryo 1): Deterministik engel kaçınma ve YKI için rota yayını başarıyla doğrulandı.")
+    print("[OK] Test 5 (Senaryo 1): Deterministik engel kaçınma ve YKI için rota yayını başarıyla doğrulandı.")
 
 
 def test_node_scenario_2_blocked_goal_no_path():
@@ -217,7 +218,7 @@ def test_node_scenario_2_blocked_goal_no_path():
     assert len(node.last_path_ned) == 0, "Engellenmiş hedefe rota ÜRETİLMEMELİDİR!"
     # Asla ROUTE_READY çağrısı yapılmamalıdır
     node.cli_route_ready.call_async.assert_not_called()
-    print("✓ Test 6 (Senaryo 2): Engellenmiş hedefte NO_PATH ve Status 4 engeli başarıyla doğrulandı.")
+    print("[OK] Test 6 (Senaryo 2): Engellenmiş hedefte NO_PATH ve Status 4 engeli başarıyla doğrulandı.")
 
 
 def test_node_scenario_3_invalid_and_stale_data_filtering():
@@ -240,7 +241,7 @@ def test_node_scenario_3_invalid_and_stale_data_filtering():
     assert node.goal_pos_ned is None, "position_valid=False olan hedef kaydedilmemelidir"
     assert len(node.obstacles_ned) == 0, "NaN koordinatlı engel kaydedilmemelidir"
     assert len(events) == 0, "Geçersiz tespitler için hiçbir olay üretilmemelidir"
-    print("✓ Test 7 (Senaryo 3): Geçersiz ve güvenilmez veri filtreleme başarıyla doğrulandı.")
+    print("[OK] Test 7 (Senaryo 3): Geçersiz ve güvenilmez veri filtreleme başarıyla doğrulandı.")
 
 
 def test_node_scenario_4_start_lock_and_fsm_trigger_rules():
@@ -296,7 +297,7 @@ def test_node_scenario_4_start_lock_and_fsm_trigger_rules():
     node.cli_route_ready.call_async.assert_called_once()
     assert node.route_ready_called is True
     assert any("ROUTE_READY_REQUESTED" in ev for ev in events)
-    print("✓ Test 8 (Senaryo 4): Start kilitleme ve HEDEF_BEKLE'de doğrudan Status 4 tetiklemesi başarıyla doğrulandı.")
+    print("[OK] Test 8 (Senaryo 4): Start kilitleme ve HEDEF_BEKLE'de doğrudan Status 4 tetiklemesi başarıyla doğrulandı.")
 
 
 def test_gridplanner_boundary_wall_behavior_comparison():
@@ -316,7 +317,7 @@ def test_gridplanner_boundary_wall_behavior_comparison():
     resp_strict, path_strict, work_strict = planner_strict.plan_path(grid_empty, (0, 0), (9, 9))
     assert resp_strict["status"] == "START_BLOCKED", "Katı sınır modunda köşeler duvar enflasyonuyla bloke edilmelidir"
     assert work_strict[0, 0] == 1, "Katı sınır modunda köşe hücresi duvar enflasyonuna dahil olmalıdır"
-    print("✓ Test 9: GridPlanner sınır dolgusu davranışı (açık hava serbestliği vs katı duvar) başarıyla doğrulandı.")
+    print("[OK] Test 9: GridPlanner sınır dolgusu davranışı (açık hava serbestliği vs katı duvar) başarıyla doğrulandı.")
 
 
 def test_ready_route_stale_position_blocks_status4():
@@ -345,7 +346,7 @@ def test_ready_route_stale_position_blocks_status4():
     node.vehicle_pose_cb(pose_stale)
     node.check_and_unlock_return_path()
     node.cli_route_ready.call_async.assert_not_called()
-    print("✓ Test 10: Hazır rota varken eski konumda Status 4 blokajı doğrulandı.")
+    print("[OK] Test 10: Hazır rota varken eski konumda Status 4 blokajı doğrulandı.")
 
 
 def test_valid_arrival_single_trigger_and_no_trigger_in_hedefe_git():
@@ -378,7 +379,7 @@ def test_valid_arrival_single_trigger_and_no_trigger_in_hedefe_git():
     node.adapter_event_callback(String(data="OBSERVED_STATE:HEDEF_BEKLE"))
     node.vehicle_pose_cb(pose)
     node.cli_route_ready.call_async.assert_called_once()
-    print("✓ Test 11: HEDEF_BEKLE'de tek tetikleme ve HEDEFE_GIT koruması başarıyla doğrulandı.")
+    print("[OK] Test 11: HEDEF_BEKLE'de tek tetikleme ve HEDEFE_GIT koruması başarıyla doğrulandı.")
 
 
 def test_return_path_planning_and_altitude_and_obstacles():
@@ -416,7 +417,7 @@ def test_return_path_planning_and_altitude_and_obstacles():
     for p in ret_path.poses:
         dist_obs = math.hypot(p.pose.position.x - 3.0, p.pose.position.y - 3.0)
         assert dist_obs >= 0.5
-    print("✓ Test 12: Dönüş rotası A*, kalkış referansı, ref_z - 33 irtifası ve engel kaçınma başarıyla doğrulandı.")
+    print("[OK] Test 12: Dönüş rotası A*, kalkış referansı, ref_z - 33 irtifası ve engel kaçınma başarıyla doğrulandı.")
 
 
 def test_planning_failure_invalidates_adapter_route():
@@ -436,7 +437,7 @@ def test_planning_failure_invalidates_adapter_route():
     assert len(return_path_msgs) > 0
     assert len(return_path_msgs[-1].poses) == 0  # Boş rota yayınlandı
     assert f"session_5005" in return_path_msgs[-1].header.frame_id
-    print("✓ Test 13: Planlama başarısızlığında boş rota yayını ve iptal mekanizması başarıyla doğrulandı.")
+    print("[OK] Test 13: Planlama başarısızlığında boş rota yayını ve iptal mekanizması başarıyla doğrulandı.")
 
 
 def test_direct_status4_trigger_in_hedef_bekle_on_route_ready():
@@ -489,7 +490,7 @@ def test_direct_status4_trigger_in_hedef_bekle_on_route_ready():
     # 3. Status 4 derhal ve 1 kez çağrılmış olmalı
     node.cli_route_ready.call_async.assert_called_once()
     assert node.route_ready_called is True
-    print("✓ Test 14: HEDEF_BEKLE'de rota hazır olduğu an doğrudan Status 4 tetiklemesi başarıyla doğrulandı.")
+    print("[OK] Test 14: HEDEF_BEKLE'de rota hazır olduğu an doğrudan Status 4 tetiklemesi başarıyla doğrulandı.")
 
 
 def test_status3_never_sent_under_any_condition():
@@ -510,7 +511,7 @@ def test_status3_never_sent_under_any_condition():
     ]
     node.detections_callback(det_msg)
     assert not any("OBSERVATION_DISPATCHED" in ev for ev in events), "Hiçbir event'te OBSERVATION_DISPATCHED olmamalıdır"
-    print("✓ Test 15: Status 3'ün hiçbir koşulda gönderilmediği başarıyla doğrulandı.")
+    print("[OK] Test 15: Status 3'ün hiçbir koşulda gönderilmediği başarıyla doğrulandı.")
 
 
 def test_return_path_fails_when_takeoff_goal_blocked_by_physical_obstacles():
@@ -548,7 +549,7 @@ def test_return_path_fails_when_takeoff_goal_blocked_by_physical_obstacles():
     assert any("RETURN_PLANNING_FAILED" in ev for ev in events), "RETURN_PLANNING_FAILED eventi üretilmelidir"
     assert len(node.return_path_ned) == 0, "Dönüş rotası listesi boş kalmalıdır"
     assert len(ret_msgs) > 0 and len(ret_msgs[-1].poses) == 0, "Temizlemeden sonra adaptöre boş Path yayınlanmış olmalıdır"
-    print("✓ Test 16: Fiziksel olarak engelli kalkış konumuna dönüş rotası blokajı başarıyla doğrulandı.")
+    print("[OK] Test 16: Fiziksel olarak engelli kalkış konumuna dönüş rotası blokajı başarıyla doğrulandı.")
 
 
 def test_physical_obstacle_retained_after_start_goal_inflation_relaxation():
@@ -574,8 +575,230 @@ def test_physical_obstacle_retained_after_start_goal_inflation_relaxation():
     assert work_grid[15, 14] == 1, "Goal bitişiğindeki fiziksel engel work_grid'de OBSTACLE (1) kalmalıdır"
     assert grid[6, 7] == GridPlanner.OBSTACLE
     assert grid[15, 14] == GridPlanner.OBSTACLE
-    print("✓ Test 17: Start/goal çevresi gevşetmesinde fiziksel engellerin korunduğu başarıyla doğrulandı.")
+    print("[OK] Test 17: Start/goal çevresi gevşetmesinde fiziksel engellerin korunduğu başarıyla doğrulandı.")
 
+def test_phase_b_a_successful_plan_locks_after_1_try():
+    """FAZ B (a): başarılı plan + aynı HEDEF_BEKLE pose 10 kez -> plan 1 kez"""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9991
+    node.lua_fsm_state = "HEDEF_BEKLE"
+    
+    orig_plan = node.plan_return_path
+    c = {"count": 0}
+    def mock_plan(*args, **kwargs):
+        c["count"] += 1
+        return orig_plan(*args, **kwargs)
+    node.plan_return_path = mock_plan
+    
+    ref = PoseStamped()
+    ref.header.stamp = node.get_clock().now().to_msg()
+    ref.header.frame_id = "ekf_origin_ned:session_9991"
+    ref.pose.position.x = 0.0
+    ref.pose.position.y = 0.0
+    ref.pose.position.z = 0.0
+    node.takeoff_return_cb(ref)
+    node.goal_pos_ned = (5.0, 5.0)
+
+    pose = PoseStamped()
+    pose.header.stamp = node.get_clock().now().to_msg()
+    pose.header.frame_id = "ekf_origin_ned:session_9991"
+    pose.pose.position.x = 2.0
+    pose.pose.position.y = 2.0
+    pose.pose.position.z = -33.0
+    
+    for i in range(10):
+        # Time needs to advance technically but not strictly for success lock since it locks early
+        node.vehicle_pose_cb(pose)
+        
+    assert c["count"] == 1
+    assert node.return_path_locked is True
+    print("✓ Test 18: FAZ B (a) Başarılı plan 1 denemede kilitlenir.")
+
+def test_phase_b_b_failed_plan_retries_3_times_and_locks():
+    """FAZ B (b): planlanamayan (engelle kapatılmış) + 10 pose -> çağrı == 3, kilit == True"""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9992
+    node.lua_fsm_state = "HEDEF_BEKLE"
+    
+    node.obstacles_ned = [(0.5, 0.0), (-0.5, 0.0), (0.0, 0.5), (0.0, -0.5)]
+    
+    orig_plan = node.plan_return_path
+    c = {"count": 0}
+    def mock_plan(*args, **kwargs):
+        c["count"] += 1
+        return orig_plan(*args, **kwargs)
+    node.plan_return_path = mock_plan
+
+    ref = PoseStamped()
+    ref.header.stamp = node.get_clock().now().to_msg()
+    ref.header.frame_id = "ekf_origin_ned:session_9992"
+    node.takeoff_return_cb(ref)
+    node.goal_pos_ned = (5.0, 5.0)
+
+    # Dron physically blocked trying to return to origin
+    pose = PoseStamped()
+    pose.header.stamp = node.get_clock().now().to_msg()
+    pose.header.frame_id = "ekf_origin_ned:session_9992"
+    pose.pose.position.x = 2.0
+    pose.pose.position.y = 2.0
+    
+    base_t = time.monotonic()
+    import time as real_time
+    with patch('time.monotonic') as mocked_time:
+        for i in range(10):
+            mocked_time.return_value = base_t + float(i)*1.5  # 1.5 saniye aralıklarla
+            pose.header.stamp = node.get_clock().now().to_msg()
+            node.vehicle_pose_cb(pose)
+            
+    assert c["count"] == 3, f"Count should be 3, was {c['count']}"
+    assert node.return_path_locked is True
+    print("✓ Test 19: FAZ B (b) Planlanamayan rota tam 3 kez denenip kilitlenir.")
+
+def test_phase_b_c_new_obstacle_cut_unlocks():
+    """FAZ B (c): yeni engel dönüş rotasını kesiyor -> yeniden planlama izinli"""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9993
+    # Simüle edilmiş başarılı kilit durumu
+    node.return_path_locked = True
+    node.return_plan_attempts = 1
+    node.return_path_ned = [(2.0, 2.0), (1.0, 1.0), (0.0, 0.0)]
+    
+    # 1. Engel kesmiyor -> kilit açılmamalı
+    det = DetectionArray()
+    det.detections = [make_detection("engel", 10.0, 10.0)]
+    node.detections_callback(det)
+    assert node.return_path_locked is True
+    
+    # 2. Engel tam rotanın üstüne düşüyor (1.0, 1.0) ENU(1.0, 1.0)
+    det2 = DetectionArray()
+    det2.detections = [make_detection("engel", 1.0, 1.0)]
+    node.detections_callback(det2)
+    assert node.return_path_locked is False
+    assert node.return_plan_attempts == 0
+    print("✓ Test 20: FAZ B (c) Yeni engel dönüş rotasını kestiğinde kilit açılır.")
+
+def test_phase_c_horizon_33m_coverage():
+    """FAZ C (a, b): 33m uzaklıklar grid içinde (None değil) ve plan başarılı (engelden kaçar)."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9994
+    node.lua_fsm_state = "HEDEF_BEKLE"
+    # Faz C testlerinde sınırları dinamik olarak 140x140 (offset 70) yapalım 
+    node.arena_w = 140.0
+    node.arena_h = 140.0
+    node.offset_x = 70.0
+    node.offset_y = 70.0
+    
+    # Kalkış referansı 0,0
+    ref = PoseStamped()
+    ref.header.stamp = node.get_clock().now().to_msg()
+    ref.header.frame_id = "ekf_origin_ned:session_9994"
+    node.takeoff_return_cb(ref)
+    
+    # 33m yönlerimiz
+    targets = [(33.0, 0.0), (0.0, 33.0), (23.3, 23.3), (-33.0, 0.0)]
+    
+    for tx, ty in targets:
+        assert node.ned_to_grid(tx, ty) is not None, f"({tx}, {ty}) grid dışında (None) dönüyor!"
+        node.vehicle_pos_ned = (tx, ty)
+        
+        ok, msg = node.plan_return_path((tx, ty))
+        assert ok is True, f"({tx}, {ty}) için plan başarısız: {msg}"
+    
+    # Engelli test (33,0 -> 0,0 arasına duvar)
+    node.obstacles_ned = [(15.0, y) for y in np.arange(-5, 6, 0.5)]
+    node.vehicle_pos_ned = (33.0, 0.0)
+    ok, msg = node.plan_return_path((33.0, 0.0))
+    assert ok is True
+    
+    # Rota duvardan geçmiyor olmalı
+    for px, py in node.return_path_ned:
+        # Duvar x=15 civarında
+        if 14.0 < px < 16.0:
+            assert py > 5.0 or py < -5.0, "Rota engelin içinden geçti!"
+            
+    print("✓ Test 21: FAZ C (a, b) 33m yatay menzil kapsama ve engelden kaçınma doğrulandı.")
+
+def test_phase_c_out_of_bounds_retries():
+    """FAZ C (c): (200,0) -> RETURN_START_OUT_OF_BOUNDS -> max 3 deneme."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9995
+    node.lua_fsm_state = "HEDEF_BEKLE"
+    # Faz C testlerinde sınırları dinamik olarak 140x140 (offset 70) yapalım 
+    node.arena_w = 140.0
+    node.arena_h = 140.0
+    node.offset_x = 70.0
+    node.offset_y = 70.0
+
+    orig_plan = node.plan_return_path
+    c = {"count": 0}
+    def mock_plan(*args, **kwargs):
+        c["count"] += 1
+        return orig_plan(*args, **kwargs)
+    node.plan_return_path = mock_plan
+    
+    ref = PoseStamped()
+    ref.header.stamp = node.get_clock().now().to_msg()
+    ref.header.frame_id = "ekf_origin_ned:session_9995"
+    node.takeoff_return_cb(ref)
+    node.goal_pos_ned = (5.0, 5.0)
+
+    # Dron grid dışında -> OUT_OF_BOUNDS
+    pose = PoseStamped()
+    pose.header.stamp = node.get_clock().now().to_msg()
+    pose.header.frame_id = "ekf_origin_ned:session_9995"
+    pose.pose.position.x = 200.0
+    pose.pose.position.y = 0.0
+    
+    base_t = time.monotonic()
+    with patch('time.monotonic') as mocked_time:
+        for i in range(5):
+            mocked_time.return_value = base_t + float(i)*1.5
+            node.vehicle_pose_cb(pose)
+            
+    assert c["count"] == 3, f"Deneme sayısı 3 olmalıydı, {c['count']} oldu."
+    assert node.return_path_locked is True, "3 başarısızlıktan sonra kilitlenmeliydi."
+    print("✓ Test 22: FAZ C (c) Grid dışı konum 3 deneme sonrası kilitleniyor.")
+
+def test_phase_c_blocked_goal_timeout_limit():
+    """FAZ C (d): 140x140 arena, hedef tamamen kapalı. A* plan_return_path'i 1.0 saniyenin altında dönmeli."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9996
+    
+    # 140x140 yap
+    node.arena_w = 140.0
+    node.arena_h = 140.0
+    node.offset_x = 70.0
+    node.offset_y = 70.0
+    
+    ref = PoseStamped()
+    ref.header.stamp = node.get_clock().now().to_msg()
+    ref.header.frame_id = "ekf_origin_ned:session_9996"
+    node.takeoff_return_cb(ref)
+    
+    # Hedef 0,0 (Takeoff point)
+    
+    # Hedefin etrafını dev bir çemberle kapatalım (tamamen izole olsun)
+    node.obstacles_ned = []
+    for dx_val in np.arange(-15.0, 15.5, 0.5):
+        for dy_val in np.arange(-15.0, 15.5, 0.5):
+            if abs(dx_val) == 15.0 or abs(dy_val) == 15.0:
+                node.obstacles_ned.append((float(dx_val), float(dy_val)))
+                
+    # Drone (ret_start) dışarıda bir yerde 33m ilerde
+    t0 = time.monotonic()
+    ok, msg = node.plan_return_path((33.0, 33.0))
+    t1 = time.monotonic()
+    
+    dt = t1 - t0
+    assert not ok, "Kapalı hedefe plan yapılamamalıydı!"
+    assert dt < 1.0, f"Planlama {dt:.2f} saniye sürdü! Hedef 1.0 sn altıydı."
+    print(f"✓ Test 23: FAZ C (d) Tam kapalı alanda 1.0sn erken çıkış limit altına indi ({dt:.3f} sn).")
 
 def run_all_tests():
     print("\n" + "="*75)
@@ -599,6 +822,12 @@ def run_all_tests():
         test_status3_never_sent_under_any_condition,
         test_return_path_fails_when_takeoff_goal_blocked_by_physical_obstacles,
         test_physical_obstacle_retained_after_start_goal_inflation_relaxation,
+        test_phase_b_a_successful_plan_locks_after_1_try,
+        test_phase_b_b_failed_plan_retries_3_times_and_locks,
+        test_phase_b_c_new_obstacle_cut_unlocks,
+        test_phase_c_horizon_33m_coverage,
+        test_phase_c_out_of_bounds_retries,
+        test_phase_c_blocked_goal_timeout_limit,
     ]
     passed = 0
     failed = 0
