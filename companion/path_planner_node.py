@@ -26,6 +26,7 @@ import math
 import time
 from typing import Optional, List, Tuple, Dict, Any
 import numpy as np
+import json
 
 import rclpy
 from rclpy.node import Node
@@ -49,7 +50,7 @@ class PathPlannerNode(Node):
         # ----------------------------------------------------------------------
         # Parametre Tanımları
         # ----------------------------------------------------------------------
-        # FAZ B GÜNCELLEMESİ: Drone 33 m uzağa uçtuğu için 20x20'lik Grid (10m ofset) yetersizdi. 
+        # FAZ B GÜNCELLEMESİ: Drone 33 m uzağa uçtuğu için 20x20'lik Grid (10m ofset) yetersizdi.
         # Yeni büyüklük: 33 m gidiş + görüş açısı toleransı (~31m) + pay ~ 70m uç.
         # Toplam arena 140x140m (NED x,y = [-70, +70]). (ROS parametreleriyle ezilebilir)
         self.declare_parameter('arena_width', 140.0)        # Metre (X ekseni genişliği: 140m)
@@ -152,6 +153,11 @@ class PathPlannerNode(Node):
             '/planner/status',
             10
         )
+        self.pub_debug_status = self.create_publisher(
+            String,
+            '/planner/debug/status',
+            10
+        )
 
         # 6. Status 4 Servis İstemcisi (/mission/route_ready)
         self.cli_route_ready = self.create_client(
@@ -208,7 +214,11 @@ class PathPlannerNode(Node):
         self.last_vehicle_pos_mono = None
         self.diagnostic_logged = False
         self.warned_out_of_bounds_pts = set()
-        
+
+        # [PHASE 2 GATING]
+        self.ai_path_ready = False
+        self.last_ai_path_session_id = None
+
         # Teşhis ve uyarı kilitleri
         self.diagnostic_logged = False
         self.warned_out_of_bounds_pts = set()
@@ -371,12 +381,12 @@ class PathPlannerNode(Node):
 
         if 0 <= gx < grid_w and 0 <= gy < grid_h:
             return (gx, gy)
-            
+
         pt_key = (round(x_ned, 1), round(y_ned, 1))
         if pt_key not in self.warned_out_of_bounds_pts:
             self.get_logger().warn(f"[PLANNER] NED coordinati sınır disinda kaldi: {x_ned:.2f}, {y_ned:.2f} (Hesaplanilan hucre: {gx}, {gy}, Max hucre: {grid_w-1}, {grid_h-1})")
             self.warned_out_of_bounds_pts.add(pt_key)
-        
+
         return None
 
     def grid_to_ned(self, gx: int, gy: int) -> Tuple[float, float]:
@@ -468,7 +478,7 @@ class PathPlannerNode(Node):
                     new_info = True
                     self.get_logger().info(f"[PLANNER] Yeni engel eklendi: NED [{x_ned:.2f}, {y_ned:.2f}]")
                     self.pub_status.publish(String(data=f"OBSTACLE_ADDED:{x_ned:.2f}:{y_ned:.2f}"))
-                    
+
                     if self.return_path_locked and len(self.return_path_ned) >= 2:
                         cut = False
                         thresh = self.veh_w + self.safety_m
@@ -640,9 +650,24 @@ class PathPlannerNode(Node):
     def check_and_unlock_return_path(self):
         """
         HEDEF_BEKLE durumundayken dönüş rotasını doğrular/planlar ve Status 4 (ROUTE_READY) tetikler.
+        [PHASE 2 GATING]: AI path geçerliliği olmadan ASLA tetiklenmez.
         """
         # 1. KESİN DURUM KONTROLÜ - Yalnızca HEDEF_BEKLE durumunda açılabilir!
         if self.lua_fsm_state != "HEDEF_BEKLE":
+            return
+
+        # [PHASE 2 GATING] - AI Gidiş Rotası geçerliliği
+        if not self.ai_path_ready or self.last_ai_path_session_id != self.current_session_id:
+            if not getattr(self, 'diagnostic_ai_blocked_logged', False):
+                self.diagnostic_ai_blocked_logged = True
+                dbg_block = {
+                    "event": "ROUTE_READY_BLOCKED_NO_AI_PATH",
+                    "session_id": self.current_session_id,
+                    "ai_path_ready": self.ai_path_ready,
+                    "return_path_points": 0
+                }
+                self.pub_debug_status.publish(String(data=json.dumps(dbg_block)))
+                self.get_logger().warn("[PLANNER GATING] ROUTE_READY BLOCKED: Gecerli bir AI (Gidis) rotasi yok!")
             return
 
         # 2. Aktif oturum doğrulaması
@@ -664,7 +689,7 @@ class PathPlannerNode(Node):
             return
 
         vx, vy = self.vehicle_pos_ned
-        
+
         # Sadece TEK BİR KEZ teşhis logu al:
         if not self.diagnostic_logged:
             self.diagnostic_logged = True
@@ -672,15 +697,15 @@ class PathPlannerNode(Node):
             max_x_bd = self.arena_w - self.offset_x
             min_y_bd = -self.offset_y
             max_y_bd = self.arena_h - self.offset_y
-            
+
             obs_x = [ox for ox, oy in self.obstacles_ned]
             obs_y = [oy for ox, oy in self.obstacles_ned]
             min_ox, max_ox = round(min(obs_x), 2) if obs_x else 0.0, round(max(obs_x), 2) if obs_x else 0.0
             min_oy, max_oy = round(min(obs_y), 2) if obs_y else 0.0, round(max(obs_y), 2) if obs_y else 0.0
-            
+
             veh_valid = True if self.ned_to_grid(vx, vy) else False
             tkf_valid = True if self.ned_to_grid(*self.takeoff_return_pos_ned) else False
-            
+
             self.get_logger().info(
                 f"\n--- [PLANNER TEŞHİS LOGU (İLK DENEME)] ---\n"
                 f"Araç Konumu (NED): ({vx:.2f}, {vy:.2f}) -> Grid'de mi: {veh_valid}\n"
@@ -696,10 +721,10 @@ class PathPlannerNode(Node):
             if self.auto_route_ready and not self.route_ready_called:
                 self.trigger_route_ready_call()
             return
-            
+
         if self.return_plan_attempts >= 3:
             return
-            
+
         now = time.monotonic()
         if now - self.last_attempt_mono < 1.0:
             return
@@ -707,8 +732,19 @@ class PathPlannerNode(Node):
         # Hazır rota yoksa: Doğrulanmış taze araç konumundan fiziksel kalkış referansına planla ve yayınla
         self.return_plan_attempts += 1
         self.last_attempt_mono = now
+
+        # [INSTRUMENTATION]
+        dbg = {
+            "event": "PLANNER_INPUT",
+            "trigger": "fsm_route_ready_check",
+            "goal_source": "TAKEOFF_RETURN_POINT",
+            "start": [vx, vy],
+            "goal": [float(self.takeoff_return_pos_ned[0]), float(self.takeoff_return_pos_ned[1])]
+        }
+        self.pub_debug_status.publish(String(data=json.dumps(dbg)))
+
         ok, msg = self.plan_return_path((vx, vy))
-        
+
         if ok:
             self.return_path_locked = True
             if self.auto_route_ready and not self.route_ready_called and len(self.return_path_ned) >= 2:
@@ -766,6 +802,7 @@ class PathPlannerNode(Node):
             err = f"PLANNING_FAILED:{status}"
             self.get_logger().warn(f"[PLANNER] Rota bulunamadi: {err}")
             self.pub_status.publish(String(data=err))
+            self.ai_path_ready = False
             return False, err
 
         # Izgara yolunu metrik NED koordinatlarına dönüştür
@@ -781,6 +818,7 @@ class PathPlannerNode(Node):
             err = "PLANNING_FAILED:SEGMENT_COLLISION"
             self.get_logger().warn(f"[PLANNER] Gidiş segmenti engelle kesişti: {err}")
             self.pub_status.publish(String(data=err))
+            self.ai_path_ready = False
             return False, err
 
         self.last_path_ned = metric_path
@@ -801,6 +839,21 @@ class PathPlannerNode(Node):
         msg_success = f"PLANNING_SUCCESS:waypoints_{len(metric_path)}"
         self.get_logger().info(f"[PLANNER] Çarpışmasız rota başarıyla hesaplandı: {len(metric_path)} nokta.")
         self.pub_status.publish(String(data=msg_success))
+
+        # [PHASE 2 GATING]
+        self.ai_path_ready = True
+        self.last_ai_path_session_id = self.current_session_id
+
+        # [INSTRUMENTATION]
+        dbg = {
+            "event": "AI_PATH_VALID",
+            "trigger": "vision_detection",
+            "goal_source": "AI_DETECTION",
+            "start": [float(self.start_pos_ned[0]), float(self.start_pos_ned[1])],
+            "goal": [float(self.goal_pos_ned[0]), float(self.goal_pos_ned[1])],
+            "path_points": len(metric_path)
+        }
+        self.pub_debug_status.publish(String(data=json.dumps(dbg)))
 
         # Gidiş rotası /planner/path ile YKI'ye yayınlandı (otopilot yerine operatör ekranına gider).
         # HEDEF_BEKLE durumundaysa ve kalkış referansı kilitliyse dönüş rotasını aç ve Status 4 tetikle:
