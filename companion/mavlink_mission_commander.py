@@ -123,7 +123,7 @@ class RobustStatustextAssembler:
 class MavlinkAdapterNode(Node):
     ALLOWED_FRAMES_NED = {"ekf_origin_ned", "ned"}
     ALLOWED_STATES_GOTO_OBS = {"HEDEF_BEKLE", "HEDEF_KONUMUNDA_BEKLE"}
-    ALLOWED_STATES_ROUTE_READY = {"HEDEF_BEKLE", "HEDEF_KONUMUNDA_BEKLE"}
+    ALLOWED_STATES_ROUTE_READY = {"HEDEF_BEKLE"}
 
     def __init__(self):
         super().__init__('mavlink_mission_commander')
@@ -226,9 +226,6 @@ class MavlinkAdapterNode(Node):
         self.last_sent_types = {1: None, 2: None, 3: None, 4: None}
         self.sub_detections = self.create_subscription(
             DetectionArray, '/vision/detections', self.det_callback, qos_profile_sensor_data
-        )
-        self.sub_goto_obs = self.create_subscription(
-            PoseStamped, '/mission/goto_observation', self.goto_observation_callback, 10
         )
         self.sub_local_pos = self.create_subscription(
             PoseStamped, '/mavros/local_position/pose', self.local_pos_cb, qos_profile_sensor_data

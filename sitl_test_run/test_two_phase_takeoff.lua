@@ -92,20 +92,38 @@ _G.mavlink = {
     receive_chan = function(self) return nil, 0 end,
     send_chan = function(self, c, id, p) return true end
 }
+_G.mission = {
+    num_commands = function() return 0 end
+}
 
 local mission = dofile("/workspace/s500_lua_mission/s500_mission.lua")
 assert(type(mission) == "table", "s500_mission.lua yüklenemedi!")
 
 -- Mock upvalue'ları bağla
+local queued_mavlink_event = nil
+local state_transitions = {}
+
 local function setup_mission_upvalues(ground_pos, forward_yaw)
     local upval_i = 1
     while true do
-        local name, _ = debug.getupvalue(mission.update, upval_i)
+        local name, val = debug.getupvalue(mission.update, upval_i)
         if not name then break end
         if name == "BASLANGIC_KONUMU" then
             debug.setupvalue(mission.update, upval_i, ground_pos)
         elseif name == "ILERI_YAW" then
             debug.setupvalue(mission.update, upval_i, forward_yaw)
+        elseif name == "process_mavlink_queue" then
+            debug.setupvalue(mission.update, upval_i, function(now_ms)
+                local ev = queued_mavlink_event
+                queued_mavlink_event = nil
+                return ev
+            end)
+        elseif name == "change_state" then
+            local orig_change = val
+            debug.setupvalue(mission.update, upval_i, function(new_s)
+                table.insert(state_transitions, new_s)
+                return orig_change(new_s)
+            end)
         end
         upval_i = upval_i + 1
     end
@@ -239,6 +257,40 @@ mission.update()
 local last_target = mock_target_pos_calls[#mock_target_pos_calls]
 check("takeoff_return_point_ned mevcutken STATE_DONUS hedefi kayitli zemin baslangic noktasi olmali",
     last_target ~= nil and math.abs(last_target.x - 10.0) < 0.01 and math.abs(last_target.y - 20.0) < 0.01)
+
+-- ============================================================================
+-- GRUP 4: HEDEF_BEKLE'den Doğrudan DONUS'a Geçiş (Status 4 / Bypass Doğrulaması)
+-- ============================================================================
+print("\n--- GRUP 4: HEDEF_BEKLE'den Dogrudan DONUS'a Gecis (Status 4 Bypass) ---")
+state_transitions = {}
+setup_mission_upvalues({ kuzey = 10.0, dogu = 20.0, z = 0.0 }, 0.0)
+mission.set_takeoff_return_point_ned({ x = 10.0, y = 20.0, z = 0.0 })
+mission.set_state(4) -- STATE_HEDEF_BEKLE
+mission.set_state_entry_time_ms(150000)
+mock_time_ms = 150000
+
+-- STATUS_ROUTE_READY (status = 4, seq = 2, sess_id = 1001) enjekte et
+queued_mavlink_event = { status = 4, seq = 2, sess_id = 1001 }
+
+mission.update()
+local state_after_route_ready = mission.get_current_state()
+
+-- Eğer FSM ROUTE_EXECUTE (State 12) üzerinden DONUS'a (State 7) gidiyorsa o adımı da işlet
+if state_after_route_ready == 12 then
+    mission.update()
+end
+local final_state = mission.get_current_state()
+
+check("HEDEF_BEKLE (State=4) durumundayken STATUS_ROUTE_READY alindiginda FSM STATE_DONUS (State=7) durumuna ulasmali", final_state == 7)
+
+local visited_5_or_6 = false
+for _, s in ipairs(state_transitions) do
+    if s == 5 or s == 6 then
+        visited_5_or_6 = true
+        break
+    end
+end
+check("Dogrudan geciste HEDEFE_GIT (State=5) veya HEDEF_KONUMUNDA_BEKLE (State=6) ara durumlarina kesinlikle ugranmamali", not visited_5_or_6)
 
 print("\n============================================================================")
 print(string.format("TEST SONUÇLARI: %d / %d BAŞARILI | 0 BAŞARISIZ", passed, total))

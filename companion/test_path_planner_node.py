@@ -129,14 +129,14 @@ def create_test_planner_node():
         rclpy.init()
     node = PathPlannerNode()
     status_events = []
-    goto_obs_msgs = []
+    return_path_msgs = []
     path_msgs = []
 
     node.pub_status.publish = lambda msg: status_events.append(msg.data if hasattr(msg, 'data') else str(msg))
-    node.pub_goto_obs.publish = lambda msg: goto_obs_msgs.append(msg)
+    node.pub_return_path.publish = lambda msg: return_path_msgs.append(msg)
     node.pub_path.publish = lambda msg: path_msgs.append(msg)
 
-    return node, status_events, goto_obs_msgs, path_msgs
+    return node, status_events, return_path_msgs, path_msgs
 
 
 def make_detection(cls_name: str, x_enu: float, y_enu: float, valid: bool = True, conf: float = 0.9):
@@ -151,7 +151,7 @@ def make_detection(cls_name: str, x_enu: float, y_enu: float, valid: bool = True
 
 def test_node_scenario_1_deterministic_obstacle_avoidance():
     """Senaryo 1: Deterministik engel kaçınma ve çarpışmasız rota hesabı."""
-    node, events, obs_msgs, path_msgs = create_test_planner_node()
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
     node.reset_state()
 
     # Start: ENU (0, 0) -> NED (0, 0)
@@ -171,13 +171,9 @@ def test_node_scenario_1_deterministic_obstacle_avoidance():
     assert len(node.obstacles_ned) == 1
     assert any("PLANNING_SUCCESS" in ev for ev in events), "Çarpışmasız rota başarıyla hesaplanmalıdır"
 
-    # Gözlem noktası (Status 3) yayınlanmış olmalı
-    assert node.observation_dispatched is True
-    assert len(obs_msgs) > 0
-    last_obs = obs_msgs[-1]
-    assert last_obs.header.frame_id == "ekf_origin_ned"
-    assert math.isclose(last_obs.pose.position.x, 6.0, abs_tol=1e-2)
-    assert math.isclose(last_obs.pose.position.y, 6.0, abs_tol=1e-2)
+    # Status 3 (Gözlem noktası) yayıncısı ve bayrağı olmamalı
+    assert not hasattr(node, "pub_goto_obs")
+    assert not hasattr(node, "observation_dispatched")
 
     # nav_msgs/Path yayınlanmış olmalı ve en az 2 nokta içermeli
     assert len(path_msgs) > 0
@@ -189,7 +185,7 @@ def test_node_scenario_1_deterministic_obstacle_avoidance():
         # Güvenlik marjı ile engelin merkezine 0.5m'den yakın olmamalı
         assert dist_to_obs >= 0.5, f"Rota engele çok yakın ({dist_to_obs:.2f}m), çarpışma riski!"
 
-    print("✓ Test 5 (Senaryo 1): Deterministik engel kaçınma ve Status 3 gözlem yayını başarıyla doğrulandı.")
+    print("✓ Test 5 (Senaryo 1): Deterministik engel kaçınma ve YKI için rota yayını başarıyla doğrulandı.")
 
 
 def test_node_scenario_2_blocked_goal_no_path():
@@ -245,8 +241,8 @@ def test_node_scenario_3_invalid_and_stale_data_filtering():
 
 
 def test_node_scenario_4_start_lock_and_fsm_trigger_rules():
-    """Senaryo 4: Start konumu kilitleme (jitter koruması) ve kesin FSM tetikleme kuralı."""
-    node, events, obs_msgs, path_msgs = create_test_planner_node()
+    """Senaryo 4: Start konumu kilitleme (jitter koruması) ve HEDEF_BEKLE'de kesin FSM tetikleme kuralı."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
     node.reset_state()
 
     # 1. İlk geçerli start tespiti
@@ -264,7 +260,7 @@ def test_node_scenario_4_start_lock_and_fsm_trigger_rules():
     # Start konumu KİLİTLİ kalmalı, değişmemelidir!
     assert node.start_pos_ned == (2.0, 1.0), "Kilitli start konumu kamera titreşimiyle DEĞİŞMEMELİDİR!"
 
-    # 3. Hedef ekle ve rota üret
+    # 3. Oturum ve kalkış referansı kilitle
     node.current_session_id = 1001
     ref_msg = PoseStamped()
     ref_msg.header.stamp = node.get_clock().now().to_msg()
@@ -274,39 +270,30 @@ def test_node_scenario_4_start_lock_and_fsm_trigger_rules():
     ref_msg.pose.position.z = -1.0
     node.takeoff_return_cb(ref_msg)
 
-    det3 = DetectionArray()
-    det3.detections = [make_detection("hedef", 8.0, 8.0)]
-    node.detections_callback(det3)
-    assert len(node.last_path_ned) > 0
-    assert node.observation_dispatched is True
-
-    # 4. FSM Tetikleme Kuralları Doğrulaması:
-    # Gözlem noktasına gönderildiği için HEDEFE_GIT durumundayken ROUTE_READY ÇAĞRILMAMALIDIR!
-    node.cli_route_ready.service_is_ready = MagicMock(return_value=True)
-    node.cli_route_ready.call_async = MagicMock()
-
-    # Otopilot HEDEFE_GIT durumunda
-    status_msg = String(data="OBSERVED_STATE:HEDEFE_GIT")
-    node.adapter_event_callback(status_msg)
-    node.cli_route_ready.call_async.assert_not_called()  # Henüz varmadı!
-
-    # Otopilot hedefe vardı: HEDEF_KONUMUNDA_BEKLE
-    # Güncel ve hedefe yakın araç konumu gönder
+    # Otopilot HEDEF_BEKLE durumunda ve taze araç konumu veriliyor
+    node.adapter_event_callback(String(data="OBSERVED_STATE:HEDEF_BEKLE"))
     pose_msg = PoseStamped()
     pose_msg.header.stamp = node.get_clock().now().to_msg()
     pose_msg.header.frame_id = "ekf_origin_ned:session_1001"
-    pose_msg.pose.position.x = 8.0
-    pose_msg.pose.position.y = 8.0
+    pose_msg.pose.position.x = 2.0
+    pose_msg.pose.position.y = 1.0
     pose_msg.pose.position.z = -34.0
     node.vehicle_pose_cb(pose_msg)
 
-    status_msg_arrived = String(data="OBSERVED_STATE:HEDEF_KONUMUNDA_BEKLE")
-    node.adapter_event_callback(status_msg_arrived)
-    # Şimdi çağrılmış olmalı!
+    node.cli_route_ready.service_is_ready = MagicMock(return_value=True)
+    node.cli_route_ready.call_async = MagicMock()
+
+    # 4. Hedef ekle ve rota üret -> Rota çıktığı anda HEDEF_BEKLE'de Status 4 DOĞRUDAN tetiklenmeli
+    det3 = DetectionArray()
+    det3.detections = [make_detection("hedef", 8.0, 8.0)]
+    node.detections_callback(det3)
+
+    assert len(node.last_path_ned) > 0
+    # Ara durumlara (HEDEFE_GIT, HEDEF_KONUMUNDA_BEKLE) hiç gerek kalmadan çağrılmış olmalı!
     node.cli_route_ready.call_async.assert_called_once()
     assert node.route_ready_called is True
     assert any("ROUTE_READY_REQUESTED" in ev for ev in events)
-    print("✓ Test 8 (Senaryo 4): Start kilitleme ve kesin FSM tetikleme kuralları başarıyla doğrulandı.")
+    print("✓ Test 8 (Senaryo 4): Start kilitleme ve HEDEF_BEKLE'de doğrudan Status 4 tetiklemesi başarıyla doğrulandı.")
 
 
 def test_gridplanner_boundary_wall_behavior_comparison():
@@ -329,55 +316,43 @@ def test_gridplanner_boundary_wall_behavior_comparison():
     print("✓ Test 9: GridPlanner sınır dolgusu davranışı (açık hava serbestliği vs katı duvar) başarıyla doğrulandı.")
 
 
-def test_ready_route_stale_or_far_position_blocks_status4():
-    """10. Hazır rota varken eski veya hedeften uzak konumda Status 4'ün engellenmesi."""
-    node, events, obs_msgs, path_msgs = create_test_planner_node()
+def test_ready_route_stale_position_blocks_status4():
+    """10. Hazır rota varken eski (bayat, dt > 3.0s) konumda Status 4'ün engellenmesi."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
     node.reset_state()
     node.current_session_id = 2002
     node.takeoff_return_pos_ned = (0.0, 0.0)
     node.takeoff_return_pos_ned_3d = (0.0, 0.0, 0.0)
     node.goal_pos_ned = (10.0, 10.0)
-    node.observation_dispatched = True
-    node.lua_fsm_state = "HEDEF_KONUMUNDA_BEKLE"
+    node.lua_fsm_state = "HEDEF_BEKLE"
     node.cli_route_ready.service_is_ready = MagicMock(return_value=True)
     node.cli_route_ready.call_async = MagicMock()
 
     # Hazır dönüş rotası
-    node.return_path_ned = [(10.0, 10.0), (0.0, 0.0)]
+    node.return_path_ned = [(2.0, 2.0), (0.0, 0.0)]
 
-    # Durum 1: Araç konumu hedeften uzak (15.0, 10.0)
-    pose_far = PoseStamped()
-    pose_far.header.stamp = node.get_clock().now().to_msg()
-    pose_far.header.frame_id = "ekf_origin_ned:session_2002"
-    pose_far.pose.position.x = 15.0
-    pose_far.pose.position.y = 10.0
-    pose_far.pose.position.z = -33.0
-    node.vehicle_pose_cb(pose_far)
-    node.check_and_unlock_return_path()
-    node.cli_route_ready.call_async.assert_not_called()
-
-    # Durum 2: Araç konumu hedefe yakın ama zaman damgası eski (10s önce)
+    # Araç konumu zaman damgası eski (10s önce)
     old_time = Time(seconds=node.get_clock().now().seconds_nanoseconds()[0] - 10)
     pose_stale = PoseStamped()
     pose_stale.header.stamp = old_time.to_msg()
     pose_stale.header.frame_id = "ekf_origin_ned:session_2002"
-    pose_stale.pose.position.x = 10.0
-    pose_stale.pose.position.y = 10.0
+    pose_stale.pose.position.x = 2.0
+    pose_stale.pose.position.y = 2.0
     pose_stale.pose.position.z = -33.0
     node.vehicle_pose_cb(pose_stale)
+    node.check_and_unlock_return_path()
     node.cli_route_ready.call_async.assert_not_called()
-    print("✓ Test 10: Hazır rota varken hedeften uzak veya eski konumda Status 4 blokajı doğrulandı.")
+    print("✓ Test 10: Hazır rota varken eski konumda Status 4 blokajı doğrulandı.")
 
 
 def test_valid_arrival_single_trigger_and_no_trigger_in_hedefe_git():
-    """11. Geçerli varışta tek tetikleme; HEDEFE_GIT sırasında tetikleme olmaması."""
-    node, events, obs_msgs, path_msgs = create_test_planner_node()
+    """11. HEDEF_BEKLE'de tek tetikleme; tekrarlayan konumlarda ikinci çağrı olmaması."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
     node.reset_state()
     node.current_session_id = 3003
     node.takeoff_return_pos_ned = (0.0, 0.0)
     node.takeoff_return_pos_ned_3d = (0.0, 0.0, 0.0)
     node.goal_pos_ned = (5.0, 5.0)
-    node.observation_dispatched = True
     node.cli_route_ready.service_is_ready = MagicMock(return_value=True)
     node.cli_route_ready.call_async = MagicMock()
 
@@ -386,21 +361,21 @@ def test_valid_arrival_single_trigger_and_no_trigger_in_hedefe_git():
     pose = PoseStamped()
     pose.header.stamp = node.get_clock().now().to_msg()
     pose.header.frame_id = "ekf_origin_ned:session_3003"
-    pose.pose.position.x = 5.0
-    pose.pose.position.y = 5.0
+    pose.pose.position.x = 2.0
+    pose.pose.position.y = 2.0
     pose.pose.position.z = -33.0
     node.vehicle_pose_cb(pose)
     node.cli_route_ready.call_async.assert_not_called()
 
-    # HEDEF_KONUMUNDA_BEKLE durumuna geçildiğinde tetiklenmeli
-    node.adapter_event_callback(String(data="OBSERVED_STATE:HEDEF_KONUMUNDA_BEKLE"))
+    # HEDEF_BEKLE durumuna geçildiğinde tetiklenmeli
+    node.adapter_event_callback(String(data="OBSERVED_STATE:HEDEF_BEKLE"))
     node.cli_route_ready.call_async.assert_called_once()
 
     # Tekrarlanan callback'ler ikinci bir çağrı üretmemeli!
-    node.adapter_event_callback(String(data="OBSERVED_STATE:HEDEF_KONUMUNDA_BEKLE"))
+    node.adapter_event_callback(String(data="OBSERVED_STATE:HEDEF_BEKLE"))
     node.vehicle_pose_cb(pose)
     node.cli_route_ready.call_async.assert_called_once()
-    print("✓ Test 11: Geçerli varışta tek tetikleme ve HEDEFE_GIT koruması başarıyla doğrulandı.")
+    print("✓ Test 11: HEDEF_BEKLE'de tek tetikleme ve HEDEFE_GIT koruması başarıyla doğrulandı.")
 
 
 def test_return_path_planning_and_altitude_and_obstacles():
@@ -419,7 +394,7 @@ def test_return_path_planning_and_altitude_and_obstacles():
     node.obstacles_ned = [(3.0, 3.0)]
 
     # (6, 6) noktasından (0, 0) kalkış referansına dönüş planla
-    ok, msg = node.plan_return_path((6.0, 6.0), is_preplan=False)
+    ok, msg = node.plan_return_path((6.0, 6.0))
     assert ok is True
     assert len(return_path_msgs) > 0
     ret_path = return_path_msgs[-1]
@@ -461,25 +436,110 @@ def test_planning_failure_invalidates_adapter_route():
     print("✓ Test 13: Planlama başarısızlığında boş rota yayını ve iptal mekanizması başarıyla doğrulandı.")
 
 
+def test_direct_status4_trigger_in_hedef_bekle_on_route_ready():
+    """14. Yeni İzole Senaryo: HEDEF_BEKLE durumundayken rota hesaplandığı an doğrudan Status 4 tetiklenmeli."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9001
+    node.lua_fsm_state = "HEDEF_BEKLE"
+    node.cli_route_ready.service_is_ready = MagicMock(return_value=True)
+    node.cli_route_ready.call_async = MagicMock()
+
+    # Kalkış referansı
+    ref_msg = PoseStamped()
+    ref_msg.header.stamp = node.get_clock().now().to_msg()
+    ref_msg.header.frame_id = "ekf_origin_ned:session_9001"
+    ref_msg.pose.position.x = 0.0
+    ref_msg.pose.position.y = 0.0
+    ref_msg.pose.position.z = 0.0
+    node.takeoff_return_cb(ref_msg)
+
+    # Taze araç konumu (dronun HEDEF_BEKLE'deki konumu)
+    pose = PoseStamped()
+    pose.header.stamp = node.get_clock().now().to_msg()
+    pose.header.frame_id = "ekf_origin_ned:session_9001"
+    pose.pose.position.x = 2.0
+    pose.pose.position.y = 2.0
+    pose.pose.position.z = -33.0
+    node.vehicle_pose_cb(pose)
+
+    # Start ve Goal tespiti verip rota hesaplat
+    det_msg = DetectionArray()
+    det_msg.detections = [
+        make_detection("start", 0.0, 0.0),
+        make_detection("hedef", 8.0, 8.0)
+    ]
+    node.detections_callback(det_msg)
+
+    # Doğrulamalar:
+    # 1. Rota hesaplanmış olmalı
+    assert len(node.last_path_ned) >= 2
+    # 2. Dönüş rotası araç konumundan (2.0, 2.0) kalkış referansına (0.0, 0.0) yayınlanmış olmalı
+    assert len(node.return_path_ned) >= 2
+    assert math.isclose(node.return_path_ned[0][0], 2.0, abs_tol=1e-2)
+    assert math.isclose(node.return_path_ned[0][1], 2.0, abs_tol=1e-2)
+    assert math.isclose(node.return_path_ned[-1][0], 0.0, abs_tol=1e-2)
+    assert math.isclose(node.return_path_ned[-1][1], 0.0, abs_tol=1e-2)
+    # 3. Status 4 derhal ve 1 kez çağrılmış olmalı
+    node.cli_route_ready.call_async.assert_called_once()
+    assert node.route_ready_called is True
+    print("✓ Test 14: HEDEF_BEKLE'de rota hazır olduğu an doğrudan Status 4 tetiklemesi başarıyla doğrulandı.")
+
+
+def test_status3_never_sent_under_any_condition():
+    """15. Status 3'ün (GOTO_OBSERVATION) hiçbir koşulda gönderilmediğinin doğrulanması."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+
+    # Düğüm üzerinde /mission/goto_observation yayıncısı veya observation_dispatched olmamalı
+    assert not hasattr(node, "pub_goto_obs"), "PathPlannerNode üzerinde pub_goto_obs publisher'ı olmamalıdır"
+    assert not hasattr(node, "dispatch_goto_observation"), "dispatch_goto_observation fonksiyonu kaldırılmış olmalıdır"
+    assert not hasattr(node, "observation_dispatched"), "observation_dispatched bayrağı kaldırılmış olmalıdır"
+
+    # Rota planlaması çalışsa bile Status 3 yayını veya status mesajı üretilmemeli
+    det_msg = DetectionArray()
+    det_msg.detections = [
+        make_detection("start", 0.0, 0.0),
+        make_detection("hedef", 6.0, 6.0)
+    ]
+    node.detections_callback(det_msg)
+    assert not any("OBSERVATION_DISPATCHED" in ev for ev in events), "Hiçbir event'te OBSERVATION_DISPATCHED olmamalıdır"
+    print("✓ Test 15: Status 3'ün hiçbir koşulda gönderilmediği başarıyla doğrulandı.")
+
+
 def run_all_tests():
     print("\n" + "="*75)
     print("S500 ROTA PLANLAYICI & GRIDPLANNER BİRİM TESTLERİ")
     print("="*75)
-    test_gridplanner_diagonal_cut_prevention()
-    test_gridplanner_inflation_radius()
-    test_gridplanner_blocked_start_and_goal()
-    test_gridplanner_out_of_bounds()
-    test_gridplanner_boundary_wall_behavior_comparison()
-    test_node_scenario_1_deterministic_obstacle_avoidance()
-    test_node_scenario_2_blocked_goal_no_path()
-    test_node_scenario_3_invalid_and_stale_data_filtering()
-    test_node_scenario_4_start_lock_and_fsm_trigger_rules()
-    test_ready_route_stale_or_far_position_blocks_status4()
-    test_valid_arrival_single_trigger_and_no_trigger_in_hedefe_git()
-    test_return_path_planning_and_altitude_and_obstacles()
-    test_planning_failure_invalidates_adapter_route()
+    tests = [
+        test_gridplanner_diagonal_cut_prevention,
+        test_gridplanner_inflation_radius,
+        test_gridplanner_blocked_start_and_goal,
+        test_gridplanner_out_of_bounds,
+        test_gridplanner_boundary_wall_behavior_comparison,
+        test_node_scenario_1_deterministic_obstacle_avoidance,
+        test_node_scenario_2_blocked_goal_no_path,
+        test_node_scenario_3_invalid_and_stale_data_filtering,
+        test_node_scenario_4_start_lock_and_fsm_trigger_rules,
+        test_ready_route_stale_position_blocks_status4,
+        test_valid_arrival_single_trigger_and_no_trigger_in_hedefe_git,
+        test_return_path_planning_and_altitude_and_obstacles,
+        test_planning_failure_invalidates_adapter_route,
+        test_direct_status4_trigger_in_hedef_bekle_on_route_ready,
+        test_status3_never_sent_under_any_condition,
+    ]
+    passed = 0
+    failed = 0
+    for t in tests:
+        try:
+            t()
+            passed += 1
+        except Exception as e:
+            failed += 1
+            print(f"✗ FAIL: {t.__name__} -> {e}")
     print("="*75)
-    print(">>> BÜTÜN PLANLAYICI BİRİM TESTLERİ EKSİKSİZ GEÇTİ (13/13) <<<\n")
+    print(f"TEST SONUÇLARI: {passed} / {len(tests)} BAŞARILI | {failed} BAŞARISIZ")
+    print("="*75 + "\n")
 
 
 if __name__ == '__main__':
