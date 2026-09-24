@@ -117,12 +117,6 @@ class GridPlanner:
         start_inf = bool(work_grid[start[1], start[0]] == 1)
         goal_inf = bool(work_grid[goal[1], goal[0]] == 1)
         
-        # Override start and goal unconditionally locally against inflation trapping
-        # Providing a functional radius proportional to the inflation cells to unblock completely
-        override_radius = max(5, applied_inflation)
-        cv2.circle(work_grid, start, override_radius, 0, -1)
-        cv2.circle(work_grid, goal, override_radius, 0, -1)
-        
         # Prepare diagnostics
         run_diagnostics = {
             "start_was_inflated": start_inf,
@@ -131,6 +125,22 @@ class GridPlanner:
             "computed_bottleneck_B": float(round(computed_bottleneck_B, 3)),
             "applied_inflation": int(applied_inflation)
         }
+
+        # Katı sınır duvarı modunda start/goal duvar enflasyonuna kapılmışsa doğrudan ret
+        if self.strict_boundary_walls:
+            if start_inf:
+                return self._build_resp("START_BLOCKED", work_grid=work_grid, diagnostics=run_diagnostics)
+            if goal_inf:
+                return self._build_resp("GOAL_BLOCKED", work_grid=work_grid, diagnostics=run_diagnostics)
+
+        # Enflasyon (güvenlik payı) start/goal çevresinde gevşetilebilir, çünkü drone zaten orada.
+        # Ancak fiziksel engeller (grid'de OBSTACLE olanlar) HİÇBİR ZAMAN silinmemelidir.
+        if applied_inflation > 0:
+            override_radius = applied_inflation
+            cv2.circle(work_grid, start, override_radius, 0, -1)
+            cv2.circle(work_grid, goal, override_radius, 0, -1)
+            # Fiziksel engelleri kesinlikle geri yükle
+            work_grid[grid == self.OBSTACLE] = 1
         
         # We also need to let A* step out of the inflated zone if start/goal are deeply inside it!
         # If work_grid is Solid 1 around start/goal, unblocking the single pixel is useless (it has no Free neighbors).
@@ -171,7 +181,10 @@ class GridPlanner:
                     
                 if dx != 0 and dy != 0:
                     # Diagonal cut check: ensure both adjacent straights are FREE
-                    if work_grid[current[1], current[0] + dx] == 1 or work_grid[current[1] + dy, current[0]] == 1:
+                    if (work_grid[current[1], current[0] + dx] == 1 or
+                        work_grid[current[1] + dy, current[0]] == 1 or
+                        grid[current[1], current[0] + dx] == self.OBSTACLE or
+                        grid[current[1] + dy, current[0]] == self.OBSTACLE):
                         continue
                         
                 step_cost = cost

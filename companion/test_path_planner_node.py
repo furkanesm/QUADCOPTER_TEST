@@ -18,6 +18,7 @@ Bu test dosyası:
 import os
 import sys
 import math
+import traceback
 import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch
@@ -70,18 +71,20 @@ def test_gridplanner_inflation_radius():
     planner = GridPlanner(cell_size=0.5, vehicle_width=0.6, safety_margin=0.4)
     assert planner.inflation_cells == 2, f"Enflasyon hücresi 2 olmalıdır, hesaplanan: {planner.inflation_cells}"
 
-    grid = np.zeros((11, 11), dtype=np.uint8)
-    # Merkeze (5, 5) tek bir engel hücresi koy
-    grid[5, 5] = GridPlanner.OBSTACLE
+    # Dinamik darboğaz algoritmasının sınır duvarı etkisini izole etmek için engeli ve noktaları sınırdan uzakta kur
+    grid = np.zeros((21, 21), dtype=np.uint8)
+    # Merkeze (10, 10) tek bir engel hücresi koy
+    grid[10, 10] = GridPlanner.OBSTACLE
 
-    resp, path, work_grid = planner.plan_path(grid, (0, 0), (10, 10))
+    resp, path, work_grid = planner.plan_path(grid, (3, 3), (17, 17))
     assert resp["status"] == "SUCCESS"
+    assert resp["diagnostics"]["applied_inflation"] == 2
 
-    # Enflasyon matrisinde (5, 5) merkezli 2 hücrelik yarıçaptaki komşular OBSTACLE (1) olmalıdır
-    # (5, 5)'in hemen bitişiğindeki (5, 6), (5, 4), (4, 5), (6, 5) hücreleri 1 olmalı
-    assert work_grid[5, 6] == 1, "Enflasyon hücresi (5, 6) dolu olmalıdır"
-    assert work_grid[6, 5] == 1, "Enflasyon hücresi (6, 5) dolu olmalıdır"
-    assert work_grid[5, 7] == 1, "2 hücre yarıçapındaki (5, 7) dolu olmalıdır"
+    # Enflasyon matrisinde (10, 10) merkezli 2 hücrelik yarıçaptaki komşular OBSTACLE (1) olmalıdır
+    # (10, 10)'un hemen bitişiğindeki (10, 11), (11, 10) hücreleri 1 olmalı
+    assert work_grid[10, 11] == 1, "Enflasyon hücresi (10, 11) dolu olmalıdır"
+    assert work_grid[11, 10] == 1, "Enflasyon hücresi (11, 10) dolu olmalıdır"
+    assert work_grid[10, 12] == 1, "2 hücre yarıçapındaki (10, 12) dolu olmalıdır"
 
     # Yeterince uzaktaki hücre serbest kalmalıdır
     assert work_grid[0, 0] == 0, "Uzak hücre serbest kalmalıdır"
@@ -97,14 +100,14 @@ def test_gridplanner_blocked_start_and_goal():
 
     # Start engelli
     resp_s, path_s, _ = planner.plan_path(grid, (1, 1), (4, 4))
-    assert resp_s["status"] == "START_BLOCKED"
+    assert resp_s["status"] == "START_BLOCKED_PHYSICALLY"
     assert path_s is None
 
     # Goal engelli
     resp_g, path_g, _ = planner.plan_path(grid, (0, 0), (3, 3))
-    assert resp_g["status"] == "GOAL_BLOCKED"
+    assert resp_g["status"] == "GOAL_BLOCKED_PHYSICALLY"
     assert path_g is None
-    print("✓ Test 3: GridPlanner START_BLOCKED ve GOAL_BLOCKED koruması başarıyla doğrulandı.")
+    print("✓ Test 3: GridPlanner START_BLOCKED_PHYSICALLY ve GOAL_BLOCKED_PHYSICALLY koruması başarıyla doğrulandı.")
 
 
 def test_gridplanner_out_of_bounds():
@@ -464,11 +467,14 @@ def test_direct_status4_trigger_in_hedef_bekle_on_route_ready():
     node.vehicle_pose_cb(pose)
 
     # Start ve Goal tespiti verip rota hesaplat
+    # Start tespiti ENU (1,0) -> NED (0,1) iken kilitli kalkış referansı NED (0,0) kalır
     det_msg = DetectionArray()
     det_msg.detections = [
-        make_detection("start", 0.0, 0.0),
+        make_detection("start", 1.0, 0.0),
         make_detection("hedef", 8.0, 8.0)
     ]
+    # Tespit gelmeden önce erken ROUTE_READY çağrısı yapılmamalıdır
+    node.cli_route_ready.call_async.assert_not_called()
     node.detections_callback(det_msg)
 
     # Doğrulamalar:
@@ -507,6 +513,70 @@ def test_status3_never_sent_under_any_condition():
     print("✓ Test 15: Status 3'ün hiçbir koşulda gönderilmediği başarıyla doğrulandı.")
 
 
+def test_return_path_fails_when_takeoff_goal_blocked_by_physical_obstacles():
+    """16. Dönüş senaryosunda kilitli kalkış hedefi fiziksel engellerle çevriliyse rota üretilmemeli."""
+    node, events, ret_msgs, path_msgs = create_test_planner_node()
+    node.reset_state()
+    node.current_session_id = 9002
+
+    # Kilitli kalkış referansı (hedef): NED (0.0, 0.0)
+    node.takeoff_return_pos_ned = (0.0, 0.0)
+    node.takeoff_return_pos_ned_3d = (0.0, 0.0, 0.0)
+
+    # Kalkış noktasının (0.0, 0.0) 4 tarafını fiziksel engellerle tamamen kapat (0.5 m mesafede)
+    node.obstacles_ned = [
+        (0.5, 0.0),
+        (-0.5, 0.0),
+        (0.0, 0.5),
+        (0.0, -0.5),
+    ]
+
+    # reset_state() ve kurulum sonrasında listeleri temizle (sahte assert geçişlerini önle)
+    events.clear()
+    ret_msgs.clear()
+    path_msgs.clear()
+
+    # Dron serbest konumdan (6.0, 6.0) kalkış referansına dönüş planlamaya çalışır
+    ok, msg = node.plan_return_path((6.0, 6.0))
+    print(f"Test 16 return status: ok={ok}, msg={msg}")
+
+    # Doğrulamalar:
+    assert ok is False
+    assert msg == "NO_RETURN_PATH:NO_PATH", f"Hata engel kuşatmasından (NO_RETURN_PATH:NO_PATH) gelmeli, dönen: {msg}"
+    assert "START_BLOCKED" not in msg and "GOAL_BLOCKED" not in msg and "BLOCKED_PHYSICALLY" not in msg, \
+        "Start veya Goal doğrudan engelli olmamalı, kuşatmadan kaynaklanmalı"
+    assert any("RETURN_PLANNING_FAILED" in ev for ev in events), "RETURN_PLANNING_FAILED eventi üretilmelidir"
+    assert len(node.return_path_ned) == 0, "Dönüş rotası listesi boş kalmalıdır"
+    assert len(ret_msgs) > 0 and len(ret_msgs[-1].poses) == 0, "Temizlemeden sonra adaptöre boş Path yayınlanmış olmalıdır"
+    print("✓ Test 16: Fiziksel olarak engelli kalkış konumuna dönüş rotası blokajı başarıyla doğrulandı.")
+
+
+def test_physical_obstacle_retained_after_start_goal_inflation_relaxation():
+    """17. Start ve goal çevresindeki enflasyon gevşetmesinden sonra fiziksel engellerin silinmediğinin doğrulanması."""
+    planner = GridPlanner(cell_size=0.5, vehicle_width=0.6, safety_margin=0.4)
+    grid = np.zeros((21, 21), dtype=np.uint8)
+    start = (6, 6)
+    goal = (15, 15)
+
+    # Start'ın hemen yanına [y, x] = [6, 7] ve Goal'ün hemen yanına [15, 14] fiziksel engel koy
+    grid[6, 7] = GridPlanner.OBSTACLE
+    grid[15, 14] = GridPlanner.OBSTACLE
+
+    resp, path, work_grid = planner.plan_path(grid, start, goal)
+
+    # 1. Başlangıçta doğrudan engelli sayılmamalı, gevşetme dalına ulaşmış olmalı
+    assert resp["status"] not in ("START_BLOCKED", "GOAL_BLOCKED", "START_BLOCKED_PHYSICALLY", "GOAL_BLOCKED_PHYSICALLY"), \
+        f"Gevşetme dalına ulaşmadan bloke edilmemeli, status: {resp['status']}"
+    # 2. Gevşetme dalı gerçekten çalışmış olmalı
+    assert resp["diagnostics"]["applied_inflation"] > 0, "Enflasyon uygulanmış ve gevşetme dalı çalışmış olmalıdır"
+    # 3. Engel hücreleri hem work_grid hem orijinal grid üzerinde korunmalıdır
+    assert work_grid[6, 7] == 1, "Start bitişiğindeki fiziksel engel work_grid'de OBSTACLE (1) kalmalıdır"
+    assert work_grid[15, 14] == 1, "Goal bitişiğindeki fiziksel engel work_grid'de OBSTACLE (1) kalmalıdır"
+    assert grid[6, 7] == GridPlanner.OBSTACLE
+    assert grid[15, 14] == GridPlanner.OBSTACLE
+    print("✓ Test 17: Start/goal çevresi gevşetmesinde fiziksel engellerin korunduğu başarıyla doğrulandı.")
+
+
 def run_all_tests():
     print("\n" + "="*75)
     print("S500 ROTA PLANLAYICI & GRIDPLANNER BİRİM TESTLERİ")
@@ -527,6 +597,8 @@ def run_all_tests():
         test_planning_failure_invalidates_adapter_route,
         test_direct_status4_trigger_in_hedef_bekle_on_route_ready,
         test_status3_never_sent_under_any_condition,
+        test_return_path_fails_when_takeoff_goal_blocked_by_physical_obstacles,
+        test_physical_obstacle_retained_after_start_goal_inflation_relaxation,
     ]
     passed = 0
     failed = 0
@@ -537,9 +609,12 @@ def run_all_tests():
         except Exception as e:
             failed += 1
             print(f"✗ FAIL: {t.__name__} -> {e}")
+            traceback.print_exc()
     print("="*75)
     print(f"TEST SONUÇLARI: {passed} / {len(tests)} BAŞARILI | {failed} BAŞARISIZ")
     print("="*75 + "\n")
+    if failed > 0:
+        sys.exit(1)
 
 
 if __name__ == '__main__':
